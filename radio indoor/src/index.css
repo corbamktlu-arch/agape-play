@@ -1,0 +1,243 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 
+  Radio Indoor Design System
+  Theme: Professional Dark Audio Interface
+  Inspired by: Spotify, Ableton, Pro Audio Dashboards
+*/
+
+@layer base {
+  :root {
+    /* Core Colors - Dark Theme for Audio Apps */
+    --background: 220 20% 6%;
+    --foreground: 210 20% 95%;
+
+    --card: 220 18% 10%;
+    --card-foreground: 210 20% 95%;
+
+    --popover: 220 18% 10%;
+    --popover-foreground: 210 20% 95%;
+
+    /* Primary - Electric Cyan */
+    --primary: 188 95% 50%;
+    --primary-foreground: 220 20% 6%;
+    --primary-glow: 188 100% 60%;
+
+    /* Secondary - Deep Purple Accent */
+    --secondary: 220 18% 15%;
+    --secondary-foreground: 210 20% 85%;
+
+    /* Muted */
+    --muted: 220 15% 18%;
+    --muted-foreground: 215 15% 55%;
+
+    /* Accent - Warm Orange for Actions */
+    --accent: 25 95% 55%;
+    --accent-foreground: 220 20% 6%;
+
+    /* Success - Green for Active/Playing */
+    --success: 145 70% 45%;
+    --success-foreground: 145 70% 95%;
+
+    /* Warning - Amber for Alerts */
+    --warning: 38 95% 55%;
+    --warning-foreground: 38 95% 10%;
+
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 220 15% 18%;
+    --input: 220 15% 15%;
+    --ring: 188 95% 50%;
+
+    --radius: 0.75rem;
+
+    /* Sidebar */
+    --sidebar-background: 220 20% 8%;
+    --sidebar-foreground: 210 15% 75%;
+    --sidebar-primary: 188 95% 50%;
+    --sidebar-primary-foreground: 220 20% 6%;
+    --sidebar-accent: 220 18% 14%;
+    --sidebar-accent-foreground: 210 20% 90%;
+    --sidebar-border: 220 15% 15%;
+    --sidebar-ring: 188 95% 50%;
+
+    /* Audio Visualizer Colors */
+    --visualizer-1: 188 95% 50%;
+    --visualizer-2: 160 80% 50%;
+    --visualizer-3: 280 75% 60%;
+
+    /* Status Colors */
+    --status-live: 0 85% 55%;
+    --status-online: 145 70% 45%;
+    --status-offline: 220 10% 40%;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(188 95% 50%), hsl(200 90% 45%));
+    --gradient-accent: linear-gradient(135deg, hsl(25 95% 55%), hsl(35 95% 50%));
+    --gradient-card: linear-gradient(180deg, hsl(220 18% 12%), hsl(220 18% 8%));
+    --gradient-glass: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.02));
+
+    /* Shadows */
+    --shadow-sm: 0 2px 8px -2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 16px -4px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 8px 32px -8px rgba(0, 0, 0, 0.6);
+    --shadow-glow: 0 0 20px -5px hsl(188 95% 50% / 0.3);
+    --shadow-glow-accent: 0 0 20px -5px hsl(25 95% 55% / 0.3);
+  }
+
+  .dark {
+    /* Dark mode is the default, these are the same values */
+    --background: 220 20% 6%;
+    --foreground: 210 20% 95%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+}
+
+@layer components {
+  /* Glass Card Effect */
+  .glass-card {
+    @apply bg-card/80 backdrop-blur-xl border border-white/5;
+    background: var(--gradient-glass), hsl(var(--card));
+  }
+
+  /* Glowing Elements */
+  .glow-primary {
+    box-shadow: var(--shadow-glow);
+  }
+
+  .glow-accent {
+    box-shadow: var(--shadow-glow-accent);
+  }
+
+  /* Audio Visualizer Bars Animation */
+  @keyframes audio-bar {
+    0%, 100% { height: 20%; }
+    50% { height: 100%; }
+  }
+
+  .audio-bar {
+    animation: audio-bar 1s ease-in-out infinite;
+  }
+
+  /* Pulse Animation for Live Status */
+  @keyframes pulse-live {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.1); }
+  }
+
+  .pulse-live {
+    animation: pulse-live 2s ease-in-out infinite;
+  }
+
+  /* Slide In Animation */
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-slide-in {
+    animation: slide-in 0.3s ease-out forwards;
+  }
+
+  /* Fade In Animation */
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.5s ease-out forwards;
+  }
+
+  /* Progress Bar Animation */
+  @keyframes progress-shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  .progress-shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--primary)) 0%,
+      hsl(var(--primary-glow)) 50%,
+      hsl(var(--primary)) 100%
+    );
+    background-size: 200% 100%;
+    animation: progress-shimmer 2s ease-in-out infinite;
+  }
+
+  /* Volume Slider Custom */
+  .volume-slider {
+    @apply appearance-none bg-muted rounded-full h-2 cursor-pointer;
+  }
+
+  .volume-slider::-webkit-slider-thumb {
+    @apply appearance-none w-4 h-4 rounded-full bg-primary cursor-pointer;
+    box-shadow: var(--shadow-glow);
+  }
+
+  /* Status Badge Variants */
+  .status-badge-live {
+    @apply bg-red-500/20 text-red-400 border border-red-500/30;
+  }
+
+  .status-badge-online {
+    @apply bg-green-500/20 text-green-400 border border-green-500/30;
+  }
+
+  .status-badge-offline {
+    @apply bg-gray-500/20 text-gray-400 border border-gray-500/30;
+  }
+}
+
+@layer utilities {
+  /* Text Gradient */
+  .text-gradient-primary {
+    @apply bg-clip-text text-transparent;
+    background-image: var(--gradient-primary);
+  }
+
+  .text-gradient-accent {
+    @apply bg-clip-text text-transparent;
+    background-image: var(--gradient-accent);
+  }
+
+  /* Mono Font for Technical Data */
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}

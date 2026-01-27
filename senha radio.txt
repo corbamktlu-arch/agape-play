@@ -1,0 +1,6 @@
+senha database
+radioindor1243
+
+
+token supabase: radio-indoor-cli
+sbp_f70fea3315f29b54352eb1794e0fcf3ea86703ef
