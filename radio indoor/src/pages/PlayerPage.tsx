@@ -1,15 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  Play,
-  Pause,
-  SkipForward,
-  SkipBack,
-  Radio,
-  Music,
-  Megaphone,
-  RefreshCw,
-} from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Radio, Music, Megaphone, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VolumeControl } from '@/components/ui/VolumeControl';
 import { AudioVisualizer } from '@/components/ui/AudioVisualizer';
@@ -28,7 +19,6 @@ const BUCKET_NAME = 'tracks';
 const getPublicAudioUrl = (pathOrUrl?: string | null) => {
   if (!pathOrUrl) return '';
   if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) return pathOrUrl;
-
   const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(pathOrUrl);
   return data?.publicUrl || '';
 };
@@ -95,7 +85,7 @@ type ScheduleRow = {
   store_id: string | null;
   is_active: boolean;
   frequency: string | null;
-  days_of_week: any[] | null; // vem do banco às vezes como string/number
+  days_of_week: any[] | null;
   start_time: string | null;
   end_time: string | null;
   last_played_at: string | null;
@@ -120,6 +110,9 @@ export default function PlayerPage() {
   const resumeAttemptsRef = useRef(0);
   const resumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ✅ evita recarregar loja e resetar volume/tempo sem necessidade
+  const storeLoadedRef = useRef(false);
+
   const [store, setStore] = useState<Store | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -139,19 +132,53 @@ export default function PlayerPage() {
   const [duration, setDuration] = useState(0);
 
   const [playedTracks, setPlayedTracks] = useState<Set<string>>(new Set());
-
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
 
-  /** restaura intenção do usuário */
-  useEffect(() => {
-  const saved = readPlayerState();
-  if (saved?.storeId === storeId) {
-    if (typeof saved.shouldBePlaying === 'boolean') setShouldBePlaying(saved.shouldBePlaying);
-    if (typeof saved.volume === 'number') setVolume(saved.volume);
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+  /** ✅ salvar estado AGORA (antes de sair da página/rota) */
+  const saveNow = useCallback(() => {
+    const el = audioRef.current;
 
+    savePlayerState({
+      storeId,
+      trackId: currentTrack?.id || null,
+      time: el?.currentTime ?? currentTime ?? 0,
+      volume,
+      shouldBePlaying,
+    });
+  }, [storeId, currentTrack?.id, currentTime, volume, shouldBePlaying]);
+
+  /** ✅ quando storeId muda, “desmarca” loja carregada */
+  useEffect(() => {
+    storeLoadedRef.current = false;
+  }, [storeId]);
+
+  /** ✅ restaura estado quando abrir /player?store=... */
+  useEffect(() => {
+    if (!storeId) return;
+
+    const saved = readPlayerState();
+    if (saved?.storeId !== storeId) return;
+
+    if (typeof saved.shouldBePlaying === 'boolean') setShouldBePlaying(saved.shouldBePlaying);
+    if (typeof saved.volume === 'number' && Number.isFinite(saved.volume)) setVolume(saved.volume);
+
+    // o tempo e a track serão restaurados quando tracks carregarem + loadedmetadata
+  }, [storeId]);
+
+  /** ✅ salva quando sair / trocar de rota / fechar aba */
+  useEffect(() => {
+    const onPageHide = () => saveNow();
+    const onBeforeUnload = () => saveNow();
+
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      saveNow(); // salva também no unmount
+    };
+  }, [saveNow]);
 
   /** cleanup retry */
   useEffect(() => {
@@ -196,7 +223,7 @@ export default function PlayerPage() {
     setSchedules((data || []) as ScheduleRow[]);
   }, [storeId]);
 
-  /** ✅ Quando tiver storeId, carrega schedules (e refresca periodicamente) */
+  /** ✅ refresca schedules */
   useEffect(() => {
     if (!authLoading && user && storeId) {
       fetchSchedules();
@@ -209,7 +236,8 @@ export default function PlayerPage() {
   const loadStoreAndPlaylist = useCallback(async () => {
     if (!storeId) return;
 
-setLoadingPage(true);
+    // ✅ só mostra loading “primeira vez”
+    setLoadingPage((prev) => (storeLoadedRef.current ? prev : true));
 
     try {
       const storeRes: any = await (supabase as any)
@@ -230,7 +258,16 @@ setLoadingPage(true);
 
       const loadedStore = storeRes.data as unknown as Store;
       setStore(loadedStore);
-      setVolume(loadedStore.default_volume || 70);
+      storeLoadedRef.current = true;
+
+      // ✅ NÃO sobrescreve volume salvo
+      const saved = readPlayerState();
+      const savedVolume =
+        saved?.storeId === storeId && typeof saved.volume === 'number' && Number.isFinite(saved.volume)
+          ? saved.volume
+          : null;
+
+      setVolume(savedVolume ?? loadedStore.default_volume ?? 70);
 
       const playlistId = (storeRes.data.active_playlist_id as string | null) ?? null;
       if (!playlistId) {
@@ -249,13 +286,11 @@ setLoadingPage(true);
       if (linksRes.error) throw linksRes.error;
 
       const loadedTracks: Track[] = (linksRes.data || []).map((row: any) => row.tracks).filter(Boolean);
-
       setTracks(loadedTracks);
 
       if (loadedTracks.length > 0) {
-        const saved = readPlayerState();
-        const savedTrackId = saved?.storeId === storeId ? saved?.trackId || null : null;
-
+        const saved2 = readPlayerState();
+        const savedTrackId = saved2?.storeId === storeId ? saved2?.trackId || null : null;
         const found = savedTrackId ? loadedTracks.find((t) => t.id === savedTrackId) : null;
 
         setCurrentTrack((prev) => {
@@ -273,8 +308,7 @@ setLoadingPage(true);
     } finally {
       setLoadingPage(false);
     }
-}, [storeId]);
-
+  }, [storeId]);
 
   /** 3) Se não tiver logado, manda pro login */
   useEffect(() => {
@@ -350,7 +384,6 @@ setLoadingPage(true);
     };
 
     const { error } = await supabase.from('player_sessions').upsert(sessionData, { onConflict: 'store_id' });
-
     if (error) console.log('updateSession error:', error);
   }, [store, isPlaying, volume, currentTrack]);
 
@@ -376,76 +409,50 @@ setLoadingPage(true);
       volume,
       shouldBePlaying,
     });
-  }, [volume, storeId, currentTrack?.id, shouldBePlaying]); // ok
+  }, [volume, storeId, currentTrack?.id, shouldBePlaying, currentTime]);
 
   /** =========================
-   *  ✅ Force resume (anti-loop)
+   *  ✅ Force resume (anti-loop) - sem resetar tempo
    *  ========================= */
-  const forceResume = useCallback(
-    async (reason?: string) => {
-      if (isAnnouncementPlayingRef.current) return;
+  const forceResume = useCallback(async () => {
+    if (isAnnouncementPlayingRef.current) return;
 
-      const el = audioRef.current;
-      if (!el || !currentTrack?.file_url) return;
-      if (!shouldBePlaying) return;
+    const el = audioRef.current;
+    if (!el || !currentTrack?.file_url) return;
+    if (!shouldBePlaying) return;
 
-      if (resumeLockRef.current) return;
-      resumeLockRef.current = true;
+    if (resumeLockRef.current) return;
+    resumeLockRef.current = true;
 
-      try {
-        const finalUrl = getPublicAudioUrl(currentTrack.file_url);
-        if (!finalUrl) return;
+    try {
+      const finalUrl = getPublicAudioUrl(currentTrack.file_url);
+      if (!finalUrl) return;
 
-        if (el.src !== finalUrl) {
-          el.src = finalUrl;
-          el.load();
-        }
-
-        const now = Date.now();
-        if (el.readyState < 2 && now - lastWakeAtRef.current > 2000) {
-          lastWakeAtRef.current = now;
-          try {
-            el.load();
-          } catch {}
-        }
-
-        await el.play();
-        setIsPlaying(true);
-
-        if (resumeWithFadeRef.current) {
-          resumeWithFadeRef.current = false;
-
-          const target = volume / 100;
-          const fadeMs = 1500;
-          const steps = 30;
-          const stepMs = Math.max(20, Math.floor(fadeMs / steps));
-
-          el.volume = Math.min(el.volume, Math.min(0.02, target));
-
-          let i = 0;
-          const iv = setInterval(() => {
-            i += 1;
-            const next = Math.min(target, (target * i) / steps);
-            el.volume = Math.max(el.volume, next);
-
-            if (i >= steps) {
-              el.volume = target;
-              clearInterval(iv);
-            }
-          }, stepMs);
-        }
-      } catch {
-        setIsPlaying(false);
-      } finally {
-        resumeLockRef.current = false;
+      // só troca src se necessário
+      if (el.src !== finalUrl) {
+        el.src = finalUrl;
+        el.load();
       }
-    },
-    [currentTrack?.file_url, shouldBePlaying, volume]
-  );
 
-  /** =========================
-   *  ✅ Auto-resume com retry
-   *  ========================= */
+      // ✅ NÃO dar load() se já é a mesma música (load reseta pro início)
+      const now = Date.now();
+      if (el.readyState < 2 && el.src !== finalUrl && now - lastWakeAtRef.current > 2000) {
+        lastWakeAtRef.current = now;
+        try {
+          el.load();
+        } catch {}
+      }
+
+      await el.play();
+      setIsPlaying(true);
+    } catch {
+      setIsPlaying(false);
+    } finally {
+      resumeLockRef.current = false;
+    }
+  }, [currentTrack?.file_url, shouldBePlaying]);
+
+  /** ✅ Auto-resume com retry */
   const startAutoResume = useCallback(() => {
     if (isAnnouncementPlayingRef.current) return;
     if (!shouldBePlaying) return;
@@ -476,7 +483,7 @@ setLoadingPage(true);
       }
 
       resumeAttemptsRef.current += 1;
-      forceResume(`auto-resume ${resumeAttemptsRef.current}`);
+      forceResume();
 
       if (resumeAttemptsRef.current >= 6) {
         clearInterval(resumeIntervalRef.current!);
@@ -485,36 +492,14 @@ setLoadingPage(true);
     }, 1000);
   }, [forceResume, shouldBePlaying]);
 
-  /** ✅ Ao voltar pra aba/janela, inicia retry */
-  useEffect(() => {
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') startAutoResume();
-    };
-    const onFocus = () => startAutoResume();
-    const onPageShow = () => startAutoResume();
-
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('pageshow', onPageShow);
-
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('pageshow', onPageShow);
-    };
-  }, [startAutoResume]);
-
   /** Random sem repetir */
   const getNextTrack = useCallback(() => {
     if (tracks.length === 0) return null;
 
-    if (playedTracks.size >= tracks.length) {
-      setPlayedTracks(new Set());
-    }
+    if (playedTracks.size >= tracks.length) setPlayedTracks(new Set());
 
     const unplayed = tracks.filter((t) => !playedTracks.has(t.id));
     if (unplayed.length === 0) return tracks[Math.floor(Math.random() * tracks.length)];
-
     return unplayed[Math.floor(Math.random() * unplayed.length)];
   }, [tracks, playedTracks]);
 
@@ -523,14 +508,6 @@ setLoadingPage(true);
       setShouldBePlaying(true);
       setCurrentTrack(track);
       setPlayedTracks((prev) => new Set(prev).add(track.id));
-
-      savePlayerState({
-        storeId,
-        trackId: track.id,
-        time: 0,
-        volume,
-        shouldBePlaying: true,
-      });
 
       const el = audioRef.current;
       if (!el) return;
@@ -550,6 +527,7 @@ setLoadingPage(true);
         .then(() => {
           setIsPlaying(true);
           localStorage.setItem('autoplay_ok', '1');
+          savePlayerState({ storeId, trackId: track.id, time: 0, volume, shouldBePlaying: true });
         })
         .catch((err) => {
           console.error('Erro ao tocar:', err);
@@ -636,13 +614,7 @@ setLoadingPage(true);
     setCurrentTime(t);
     setDuration(el.duration || 0);
 
-    savePlayerState({
-      storeId,
-      trackId: currentTrack?.id || null,
-      time: t,
-      volume,
-      shouldBePlaying,
-    });
+    savePlayerState({ storeId, trackId: currentTrack?.id || null, time: t, volume, shouldBePlaying });
   };
 
   const handleAnnouncementEnd = () => {
@@ -651,51 +623,13 @@ setLoadingPage(true);
     isAnnouncementPlayingRef.current = false;
     setCurrentAnnouncement(null);
 
-    const el = audioRef.current;
-    if (el) el.volume = Math.min(0.02, volume / 100);
-
     if (!shouldBePlaying) {
       setIsPlaying(false);
       return;
     }
 
-    const target = volume / 100;
-    const fadeMs = 1500;
-    const steps = 20;
-    const stepMs = Math.max(20, Math.floor(fadeMs / steps));
-
-    if (el) el.volume = Math.min(0.02, target);
-
+    // ✅ volta a música tentando do ponto onde parou
     startAutoResume();
-
-    if (!el) return;
-
-    let waited = 0;
-    const waitIv = setInterval(() => {
-      waited += 100;
-
-      const isActuallyPlaying = !el.paused && !el.ended;
-      if (isActuallyPlaying) {
-        clearInterval(waitIv);
-
-        let i = 0;
-        const fadeIv = setInterval(() => {
-          i += 1;
-          const next = Math.min(target, (target * i) / steps);
-          el.volume = Math.max(el.volume, next);
-
-          if (i >= steps) {
-            el.volume = target;
-            clearInterval(fadeIv);
-          }
-        }, stepMs);
-      }
-
-      if (waited >= 4000) {
-        clearInterval(waitIv);
-        el.volume = target;
-      }
-    }, 100);
   };
 
   const playAnnouncement = useCallback(
@@ -707,10 +641,20 @@ setLoadingPage(true);
         resumeIntervalRef.current = null;
       }
 
+      // ✅ salva o ponto exato antes de pausar
       const el = audioRef.current;
-      if (el) el.pause();
-      setIsPlaying(false);
+      if (el) {
+        savePlayerState({
+          storeId,
+          trackId: currentTrack?.id || null,
+          time: el.currentTime || 0,
+          volume,
+          shouldBePlaying,
+        });
+        el.pause();
+      }
 
+      setIsPlaying(false);
       setCurrentAnnouncement(a);
 
       const an = announcementRef.current;
@@ -729,7 +673,7 @@ setLoadingPage(true);
         toast.error('Não foi possível tocar o aviso.');
       });
     },
-    [volume]
+    [storeId, currentTrack?.id, volume, shouldBePlaying]
   );
 
   /** ✅ MOTOR: toca automaticamente conforme schedules */
@@ -756,7 +700,6 @@ setLoadingPage(true);
 
         const last = sch.last_played_at ? new Date(sch.last_played_at).getTime() : 0;
         const diffMin = (Date.now() - last) / 60000;
-
         return !last || diffMin >= freqMin;
       });
 
@@ -768,10 +711,7 @@ setLoadingPage(true);
       playAnnouncement(announcement);
 
       const nowIso = new Date().toISOString();
-      await (supabase as any)
-        .from('announcement_schedules')
-        .update({ last_played_at: nowIso })
-        .eq('id', due.id);
+      await (supabase as any).from('announcement_schedules').update({ last_played_at: nowIso }).eq('id', due.id);
 
       setSchedules((prev) => prev.map((s) => (s.id === due.id ? { ...s, last_played_at: nowIso } : s)));
     };
@@ -862,21 +802,9 @@ setLoadingPage(true);
         onPlay={() => setIsPlaying(true)}
         onPlaying={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
-        onWaiting={() => {
-          console.log('AUDIO: waiting');
-          setIsPlaying(false);
-          if (!isAnnouncementPlayingRef.current) startAutoResume();
-        }}
-        onSuspend={() => {
-          console.log('AUDIO: suspend');
-          setIsPlaying(false);
-          if (!isAnnouncementPlayingRef.current) startAutoResume();
-        }}
-        onStalled={() => {
-          console.log('AUDIO: stalled');
-          setIsPlaying(false);
-          if (!isAnnouncementPlayingRef.current) startAutoResume();
-        }}
+        onWaiting={() => console.log('AUDIO: waiting')}
+        onSuspend={() => console.log('AUDIO: suspend')}
+        onStalled={() => console.log('AUDIO: stalled')}
         onError={() => {
           console.log('AUDIO: error', audioRef.current?.error);
           setIsPlaying(false);
@@ -897,10 +825,7 @@ setLoadingPage(true);
         </div>
 
         <div className="flex items-center gap-4">
-          <StatusBadge
-            status={isConnected ? 'live' : 'offline'}
-            label={isConnected ? 'Conectado' : 'Desconectado'}
-          />
+          <StatusBadge status={isConnected ? 'live' : 'offline'} label={isConnected ? 'Conectado' : 'Desconectado'} />
           <span className="text-sm text-muted-foreground">{period}</span>
           <Button variant="ghost" size="icon" onClick={fetchData} disabled={loadingData}>
             <RefreshCw className="w-4 h-4" />
@@ -916,9 +841,7 @@ setLoadingPage(true);
                 <Megaphone className="w-12 h-12 text-warning" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-foreground mb-2">
-                  {currentAnnouncement.title}
-                </h2>
+                <h2 className="text-2xl font-bold text-foreground mb-2">{currentAnnouncement.title}</h2>
                 <p className="text-muted-foreground">Reproduzindo aviso...</p>
               </div>
               <AudioVisualizer isPlaying={true} bars={12} />
@@ -948,12 +871,8 @@ setLoadingPage(true);
         <div className="text-center mb-8 max-w-md">
           {currentTrack ? (
             <>
-              <h2 className="text-2xl font-bold text-foreground mb-2 line-clamp-1">
-                {currentTrack.title}
-              </h2>
-              <p className="text-lg text-muted-foreground">
-                {currentTrack.artist || 'Artista Desconhecido'}
-              </p>
+              <h2 className="text-2xl font-bold text-foreground mb-2 line-clamp-1">{currentTrack.title}</h2>
+              <p className="text-lg text-muted-foreground">{currentTrack.artist || 'Artista Desconhecido'}</p>
             </>
           ) : (
             <>
@@ -966,10 +885,7 @@ setLoadingPage(true);
         {currentTrack && (
           <div className="w-full max-w-md mb-6">
             <div className="h-1 bg-muted rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary transition-all duration-200"
-                style={{ width: `${(currentTime / duration) * 100 || 0}%` }}
-              />
+              <div className="h-full bg-primary transition-all duration-200" style={{ width: `${(currentTime / duration) * 100 || 0}%` }} />
             </div>
             <div className="flex justify-between mt-2 text-sm text-muted-foreground">
               <span>{formatTime(currentTime)}</span>
@@ -990,11 +906,7 @@ setLoadingPage(true);
             <SkipBack className="w-6 h-6" />
           </Button>
 
-          <Button
-            size="icon"
-            className="w-20 h-20 rounded-full glow-primary"
-            onClick={isPlaying ? handlePause : handlePlay}
-          >
+          <Button size="icon" className="w-20 h-20 rounded-full glow-primary" onClick={isPlaying ? handlePause : handlePlay}>
             {isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8 ml-1" />}
           </Button>
 
@@ -1013,13 +925,7 @@ setLoadingPage(true);
               <p className="text-sm text-muted-foreground mb-3">Avisos Rápidos:</p>
               <div className="flex flex-wrap gap-2">
                 {announcements.slice(0, 3).map((a) => (
-                  <Button
-                    key={a.id}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => playAnnouncement(a)}
-                    className="text-xs"
-                  >
+                  <Button key={a.id} variant="outline" size="sm" onClick={() => playAnnouncement(a)} className="text-xs">
                     <Megaphone className="w-3 h-3 mr-1" />
                     {a.title}
                   </Button>
