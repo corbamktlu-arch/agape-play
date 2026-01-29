@@ -74,11 +74,11 @@ export default function DashboardPage() {
   };
 
   const onlineStores = sessions.filter(
-    (s) => getAlive(s) > Date.now() - 60000
+    (s) => getAlive(s) > Date.now() - 10000
   ).length;
 
  const playingStores = sessions.filter(
-  (s) => s.is_playing && getAlive(s) > Date.now() - 60000
+  (s) => s.is_playing && getAlive(s) > Date.now() - 10000
 ).length;
 
 

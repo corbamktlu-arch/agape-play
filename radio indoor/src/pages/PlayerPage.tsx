@@ -378,7 +378,7 @@ const updateSession = useCallback(async () => {
     if (store) {
       updateSession();
       // ✅ 15s deixa o painel mais rápido sem pesar
-      heartbeatRef.current = setInterval(updateSession, 15000);
+      heartbeatRef.current = setInterval(updateSession, 5000);
     }
     return () => {
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
