@@ -152,6 +152,42 @@ export default function PlayerPage() {
 
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
 
+  /** =========================
+   * ✅ FUNÇÃO ÚNICA pra gravar sessão (SEM QUEBRAR NADA)
+   * - usada no heartbeat
+   * - usada no pause / sair da aba
+   * ========================= */
+  const writeSession = useCallback(
+    async (force?: { status?: 'playing' | 'stopped'; is_playing?: boolean }) => {
+      if (!store?.id) return;
+
+      const nowIso = new Date().toISOString();
+
+      const finalIsPlaying =
+        typeof force?.is_playing === 'boolean' ? force.is_playing : isPlaying;
+
+      const finalStatus =
+        force?.status ? force.status : finalIsPlaying ? 'playing' : 'stopped';
+
+      const sessionData = {
+        store_id: store.id,
+        status: finalStatus,
+        last_seen_at: nowIso,
+        last_heartbeat: nowIso, // ✅ pro dashboard
+        is_playing: finalIsPlaying,
+        current_volume: volume,
+        current_track_id: currentTrack?.id || null,
+      };
+
+      const { error } = await supabase
+        .from('player_sessions')
+        .upsert(sessionData as any, { onConflict: 'store_id' });
+
+      if (error) console.log('writeSession error:', error);
+    },
+    [store?.id, isPlaying, volume, currentTrack?.id]
+  );
+
   /** restaura intenção do usuário */
   useEffect(() => {
     const saved = readPlayerState();
@@ -350,18 +386,40 @@ export default function PlayerPage() {
     };
   }, [currentTrack, storeId, shouldBePlaying]);
 
-  /** 7) Heartbeat */
-const updateSession = useCallback(async () => {
+    /** 7) Heartbeat (com update imediato + intervalo coerente) */
+  const updateSession = useCallback(async () => {
+    if (!store) return;
+
+    const nowIso = new Date().toISOString();
+
+    const sessionData = {
+      store_id: store.id,
+      status: isPlaying ? 'playing' : 'stopped',
+      last_seen_at: nowIso,
+      last_heartbeat: nowIso, // ✅ para o dashboard
+      is_playing: isPlaying,
+      current_volume: volume,
+      current_track_id: currentTrack?.id || null,
+    };
+
+    const { error } = await supabase
+      .from('player_sessions')
+      .upsert(sessionData, { onConflict: 'store_id' });
+
+    if (error) console.log('updateSession error:', error);
+  }, [store, isPlaying, volume, currentTrack?.id]);
+  // ✅ marca STOPPED quando sair/fechar
+const markStoppedNow = useCallback(async () => {
   if (!store) return;
 
   const nowIso = new Date().toISOString();
 
   const sessionData = {
     store_id: store.id,
-    status: isPlaying ? 'playing' : 'stopped',
+    status: 'stopped',
     last_seen_at: nowIso,
-    last_heartbeat: nowIso, // ✅ ESSENCIAL pro dashboard
-    is_playing: isPlaying,
+    last_heartbeat: nowIso,
+    is_playing: false,
     current_volume: volume,
     current_track_id: currentTrack?.id || null,
   };
@@ -370,20 +428,49 @@ const updateSession = useCallback(async () => {
     .from('player_sessions')
     .upsert(sessionData, { onConflict: 'store_id' });
 
-  if (error) console.log('updateSession error:', error);
-}, [store, isPlaying, volume, currentTrack?.id]);
+  if (error) console.log('markStoppedNow error:', error);
+}, [store, volume, currentTrack?.id]);
 
 
+  // ✅ 1) manda um update imediato quando algo importante muda (play/pause/track/volume)
+  useEffect(() => {
+    if (!store) return;
+    updateSession();
+  }, [store, isPlaying, volume, currentTrack?.id, updateSession]);
+
+  // ✅ 2) mantém heartbeat de “vida” (sem depender de play/pause)
   useEffect(() => {
     if (store) {
-      updateSession();
-      // ✅ 15s deixa o painel mais rápido sem pesar
-      heartbeatRef.current = setInterval(updateSession, 5000);
+      // 10s = bom equilíbrio (e bate com ONLINE_WINDOW_MS do Dashboard)
+      heartbeatRef.current = setInterval(updateSession, 10000);
     }
     return () => {
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
   }, [store, updateSession]);
+  // ✅ quando trocar de aba ou fechar a página, tenta marcar STOPPED
+useEffect(() => {
+  if (!store) return;
+
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') {
+      markStoppedNow();
+    }
+  };
+
+  const onPageHide = () => {
+    markStoppedNow();
+  };
+
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', onPageHide);
+
+  return () => {
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', onPageHide);
+  };
+}, [store, markStoppedNow]);
+
 
 
   /** 8) Volume + salvar estado */
@@ -658,6 +745,9 @@ const updateSession = useCallback(async () => {
       clearInterval(resumeIntervalRef.current);
       resumeIntervalRef.current = null;
     }
+
+    // ✅ AQUI é o ponto: marca STOPPED imediatamente no banco
+    writeSession({ status: 'stopped', is_playing: false });
   };
 
   // ✅ Se a música termina: toca aviso pendente no intervalo; senão, próxima música
@@ -1018,9 +1108,7 @@ const updateSession = useCallback(async () => {
                 <Megaphone className="w-12 h-12 text-warning" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-foreground mb-2">
-                  {currentAnnouncement.title}
-                </h2>
+                <h2 className="text-2xl font-bold text-foreground mb-2">{currentAnnouncement.title}</h2>
                 <p className="text-muted-foreground">Reproduzindo aviso...</p>
               </div>
               <AudioVisualizer isPlaying={true} bars={12} />
@@ -1050,12 +1138,8 @@ const updateSession = useCallback(async () => {
         <div className="text-center mb-8 max-w-md">
           {currentTrack ? (
             <>
-              <h2 className="text-2xl font-bold text-foreground mb-2 line-clamp-1">
-                {currentTrack.title}
-              </h2>
-              <p className="text-lg text-muted-foreground">
-                {currentTrack.artist || 'Artista Desconhecido'}
-              </p>
+              <h2 className="text-2xl font-bold text-foreground mb-2 line-clamp-1">{currentTrack.title}</h2>
+              <p className="text-lg text-muted-foreground">{currentTrack.artist || 'Artista Desconhecido'}</p>
             </>
           ) : (
             <>
