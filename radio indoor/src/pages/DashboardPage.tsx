@@ -32,10 +32,27 @@ export default function DashboardPage() {
   }, [user, authLoading, navigate]);
 
   useEffect(() => {
-    if (user) {
-      fetchData();
-    }
-  }, [user]);
+  if (!user) return;
+
+  // carrega na hora
+  fetchData();
+
+  // ✅ atualiza automático (5s)
+  const iv = setInterval(() => {
+    fetchData();
+  }, 5000);
+
+  // ✅ quando volta pra aba, atualiza
+  const onFocus = () => fetchData();
+  window.addEventListener('focus', onFocus);
+
+  return () => {
+    clearInterval(iv);
+    window.removeEventListener('focus', onFocus);
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [user]);
+
 
   const fetchData = async () => {
   setLoading(true);
