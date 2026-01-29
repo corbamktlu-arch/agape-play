@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  Store, 
-  ListMusic, 
-  Megaphone, 
-  Volume2, 
+import {
+  Store,
+  ListMusic,
+  Megaphone,
+  Volume2,
   TrendingUp,
   Clock,
   Activity
@@ -38,35 +38,49 @@ export default function DashboardPage() {
   }, [user]);
 
   const fetchData = async () => {
-    setLoading(true);
-    try {
-      const [storesRes, sessionsRes, announcementsRes] = await Promise.all([
-        supabase.from('stores').select('*').order('name'),
-        supabase.from('player_sessions').select('*'),
-        supabase.from('announcements').select('*').eq('is_active', true),
-      ]);
+  setLoading(true);
+  try {
+    const [storesRes, sessionsRes, announcementsRes] = await Promise.all([
+      supabase.from('stores').select('*').order('name'),
+      supabase.from('player_sessions').select('*'),
+      supabase.from('announcements').select('*').eq('is_active', true),
+    ]);
 
-      if (storesRes.data) setStores(storesRes.data as unknown as StoreType[]);
-      if (sessionsRes.data) setSessions(sessionsRes.data as unknown as PlayerSession[]);
-      if (announcementsRes.data) setAnnouncements(announcementsRes.data as unknown as Announcement[]);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    console.log('[Dashboard] stores:', storesRes.data?.length, 'error:', storesRes.error);
+    console.log('[Dashboard] sessions:', sessionsRes.data?.length, 'error:', sessionsRes.error);
+    console.log('[Dashboard] announcements:', announcementsRes.data?.length, 'error:', announcementsRes.error);
+    console.log('✅ DASHBOARD ATUALIZADO EM', new Date().toISOString());
+
+    if (storesRes.data) setStores(storesRes.data as unknown as StoreType[]);
+    if (sessionsRes.data) setSessions(sessionsRes.data as unknown as PlayerSession[]);
+    if (announcementsRes.data) setAnnouncements(announcementsRes.data as unknown as Announcement[]);
+  } catch (error) {
+    console.error('Error fetching data:', error);
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const getSessionForStore = (storeId: string) => {
     return sessions.find(s => s.store_id === storeId);
   };
 
+  // ✅ PARTE 4: torna o dashboard resistente a last_heartbeat NULL
+  const getAlive = (s: any) => {
+    const d = s.last_heartbeat || s.last_seen_at;
+    const t = d ? new Date(d).getTime() : 0;
+    return Number.isFinite(t) ? t : 0;
+  };
+
   const onlineStores = sessions.filter(
-    s => new Date(s.last_heartbeat).getTime() > Date.now() - 60000
+    (s) => getAlive(s) > Date.now() - 60000
   ).length;
 
-  const playingStores = sessions.filter(
-    s => s.is_playing && new Date(s.last_heartbeat).getTime() > Date.now() - 60000
-  ).length;
+ const playingStores = sessions.filter(
+  (s) => s.is_playing && getAlive(s) > Date.now() - 60000
+).length;
+
 
   const currentHour = new Date().getHours();
   const period = currentHour < 12 ? 'Manhã' : currentHour < 18 ? 'Tarde' : 'Noite';
