@@ -231,11 +231,12 @@ export default function PlaylistsPage() {
 
   const handleSubmit = async (data: PlaylistFormData) => {
     try {
-      // ✅ Se NÃO estiver global, exige loja do topo (como seu fluxo já fazia)
-      if (!data.is_global && !selectedStoreId) {
-        toast.error('Selecione uma loja');
-        return;
-      }
+      // ✅ Só exige loja quando o modo é "Somente esta loja"
+if (data.scope === 'store' && !selectedStoreId) {
+  toast.error('Selecione uma loja');
+  return;
+}
+
 
       // ✅ Regras do modelo C (como você já tinha)
       if (!user) {
