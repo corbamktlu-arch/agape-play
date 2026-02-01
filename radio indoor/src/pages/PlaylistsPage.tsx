@@ -44,8 +44,6 @@ import { getPeriodLabel } from '@/lib/supabase-types';
 import { cn } from '@/lib/utils';
 import { PlaylistTracksDialog } from '@/components/playlists/PlaylistTracksDialog';
 
-
-
 const playlistSchema = z.object({
   name: z.string().min(2, 'Nome deve ter pelo menos 2 caracteres'),
   description: z.string().optional(),
@@ -55,8 +53,6 @@ const playlistSchema = z.object({
   is_active: z.boolean(),
   scope: z.enum(['store', 'all_assigned', 'selected_stores']).default('store'),
   store_ids: z.array(z.string()).optional(),
-
-
 });
 
 type PlaylistFormData = z.infer<typeof playlistSchema>;
@@ -74,8 +70,8 @@ export default function PlaylistsPage() {
   const [tracksOpen, setTracksOpen] = useState(false);
   const [tracksPlaylistId, setTracksPlaylistId] = useState<string | null>(null);
   const [trackCountByPlaylist, setTrackCountByPlaylist] =
-  useState<Record<string, number>>({});
-  
+    useState<Record<string, number>>({});
+
   const form = useForm<PlaylistFormData>({
     resolver: zodResolver(playlistSchema),
     defaultValues: {
@@ -85,8 +81,6 @@ export default function PlaylistsPage() {
       is_active: true,
       scope: 'store',
       store_ids: [],
-
-
     },
   });
 
@@ -97,163 +91,247 @@ export default function PlaylistsPage() {
   }, [user, authLoading, navigate]);
 
   useEffect(() => {
-  if (!authLoading && user) {
-    fetchData();
-    
-  }
-}, [authLoading, user, selectedStoreId]);
-
-
-  useEffect(() => {
-    if (editingPlaylist) {
-      form.reset({
-        name: editingPlaylist.name,
-        description: editingPlaylist.description || '',
-        is_global: editingPlaylist.is_global,
-        store_id: editingPlaylist.store_id || undefined,
-        period: editingPlaylist.period || undefined,
-        is_active: editingPlaylist.is_active,
-      });
-    } else {
-      form.reset({
-        name: '',
-        description: '',
-        is_global: false,
-        is_active: true,
-      });
+    if (!authLoading && user) {
+      fetchData();
     }
-  }, [editingPlaylist, form]);
+  }, [authLoading, user, selectedStoreId]);
 
   const fetchData = async () => {
-  setLoading(true);
-  try {
-    const [playlistsRes, storesRes]: any = await Promise.all([
-      (supabase as any).from('playlists').select('*').order('name'),
-      (supabase as any).from('stores').select('*').eq('status', 'active').order('name'),
-    ]);
+    setLoading(true);
+    try {
+      const [playlistsRes, storesRes]: any = await Promise.all([
+        (supabase as any).from('playlists').select('*').order('name'),
+        (supabase as any).from('stores').select('*').eq('status', 'active').order('name'),
+      ]);
 
-    if (playlistsRes.error) throw playlistsRes.error;
-    if (storesRes.error) throw storesRes.error;
+      if (playlistsRes.error) throw playlistsRes.error;
+      if (storesRes.error) throw storesRes.error;
 
-    const playlistsData = playlistsRes.data || [];
-    const storesData = storesRes.data || [];
+      const playlistsData = playlistsRes.data || [];
+      const storesData = storesRes.data || [];
 
-    setStores(storesData);
+      setStores(storesData);
 
-    // Se você já usa uniqueById, mantém. Se não, pode usar direto playlistsData.
-    const uniqueById = playlistsData.reduce((acc: any[], p: any) => {
-      if (!acc.find(x => x.id === p.id)) acc.push(p);
-      return acc;
-    }, []);
+      const uniqueById = playlistsData.reduce((acc: any[], p: any) => {
+        if (!acc.find(x => x.id === p.id)) acc.push(p);
+        return acc;
+      }, []);
 
-    setPlaylists(uniqueById);
+      setPlaylists(uniqueById);
 
-    // ✅ Contar músicas por playlist
-    const linksRes: any = await (supabase as any)
-      .from('playlist_tracks')
-      .select('playlist_id');
+      // ✅ Contar músicas por playlist
+      const linksRes: any = await (supabase as any)
+        .from('playlist_tracks')
+        .select('playlist_id');
 
-    if (linksRes.error) throw linksRes.error;
+      if (linksRes.error) throw linksRes.error;
 
-    const counts: Record<string, number> = {};
-    (linksRes.data || []).forEach((row: any) => {
-      counts[row.playlist_id] = (counts[row.playlist_id] || 0) + 1;
-    });
+      const counts: Record<string, number> = {};
+      (linksRes.data || []).forEach((row: any) => {
+        counts[row.playlist_id] = (counts[row.playlist_id] || 0) + 1;
+      });
 
-    setTrackCountByPlaylist(counts);
-  } catch (error: any) {
-    console.error('Error fetching data:', error);
-    toast.error(error?.message || 'Erro ao carregar playlists');
-  } finally {
-    setLoading(false);
-  }
-};
+      setTrackCountByPlaylist(counts);
+    } catch (error: any) {
+      console.error('Error fetching data:', error);
+      toast.error(error?.message || 'Erro ao carregar playlists');
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  /** =========================
+   *  ✅ Helpers playlist_stores (pivot)
+   *  ========================= */
+  const fetchPlaylistStoreIds = async (playlistId: string): Promise<string[]> => {
+    const { data, error } = await (supabase as any)
+      .from('playlist_stores')
+      .select('store_id')
+      .eq('playlist_id', playlistId);
+
+    if (error) throw error;
+    return (data || []).map((r: any) => r.store_id);
+  };
+
+  const replacePlaylistStores = async (playlistId: string, storeIds: string[]) => {
+    const { error: delErr } = await (supabase as any)
+      .from('playlist_stores')
+      .delete()
+      .eq('playlist_id', playlistId);
+
+    if (delErr) throw delErr;
+
+    if (storeIds.length > 0) {
+      const rows = storeIds.map((sid) => ({ playlist_id: playlistId, store_id: sid }));
+      const { error: insErr } = await (supabase as any).from('playlist_stores').insert(rows);
+      if (insErr) throw insErr;
+    }
+  };
+
+  /** =========================
+   *  ✅ Ao editar: carregar lojas marcadas do pivot
+   *  (mantém seus campos originais + adiciona store_ids)
+   *  ========================= */
+  useEffect(() => {
+    const loadEditing = async () => {
+      if (editingPlaylist) {
+        try {
+          const linkedStoreIds = await fetchPlaylistStoreIds(editingPlaylist.id);
+
+          // tenta inferir scope de forma segura
+          const inferredScope: PlaylistFormData['scope'] =
+            linkedStoreIds.length > 0
+              ? 'selected_stores'
+              : (editingPlaylist.is_global ? 'all_assigned' : 'store');
+
+          form.reset({
+            name: editingPlaylist.name,
+            description: editingPlaylist.description || '',
+            is_global: editingPlaylist.is_global,
+            store_id: editingPlaylist.store_id || undefined,
+            period: (editingPlaylist.period as any) || undefined,
+            is_active: editingPlaylist.is_active,
+
+            scope: (editingPlaylist as any).scope || inferredScope,
+            store_ids: linkedStoreIds,
+          });
+
+          // se for store, tenta sincronizar o seletor do topo (não quebra nada se vazio)
+          if (inferredScope === 'store' && editingPlaylist.store_id) {
+            setSelectedStoreId(editingPlaylist.store_id);
+          }
+        } catch (e: any) {
+          console.error(e);
+          toast.error(e?.message || 'Erro ao carregar lojas da playlist');
+          // mesmo com erro, mantém seu reset básico
+          form.reset({
+            name: editingPlaylist.name,
+            description: editingPlaylist.description || '',
+            is_global: editingPlaylist.is_global,
+            store_id: editingPlaylist.store_id || undefined,
+            period: editingPlaylist.period || undefined,
+            is_active: editingPlaylist.is_active,
+          } as any);
+        }
+      } else {
+        form.reset({
+          name: '',
+          description: '',
+          is_global: false,
+          is_active: true,
+          scope: 'store',
+          store_ids: [],
+        });
+      }
+    };
+
+    loadEditing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingPlaylist]);
 
   const handleSubmit = async (data: PlaylistFormData) => {
     try {
-      // ✅ por enquanto: se is_global estiver marcado, store_id fica null.
-// ✅ se NÃO estiver marcado, amarra na loja selecionada na tela (selectedStoreId).
-if (!data.is_global && !selectedStoreId) {
-  toast.error('Selecione uma loja');
-  return;
-}
+      // ✅ Se NÃO estiver global, exige loja do topo (como seu fluxo já fazia)
+      if (!data.is_global && !selectedStoreId) {
+        toast.error('Selecione uma loja');
+        return;
+      }
 
-const payload = {
-  ...data,
-  store_id: data.is_global ? null : selectedStoreId,
-  period: data.period || null,
-};
+      // ✅ Regras do modelo C (como você já tinha)
+      if (!user) {
+        toast.error('Você precisa estar logado');
+        return;
+      }
 
+      if (data.scope === 'store' && !selectedStoreId) {
+        toast.error('Selecione uma loja no topo da página');
+        return;
+      }
+
+      if (data.scope === 'selected_stores' && (!data.store_ids || data.store_ids.length === 0)) {
+        toast.error('Selecione pelo menos 1 loja');
+        return;
+      }
+
+      // ✅ MUITO IMPORTANTE:
+      // remove store_ids do payload pq NÃO existe em public.playlists
+      const { store_ids, ...rest } = data;
+
+      // ✅ payload para a tabela playlists (sem store_ids)
+      const payload: any = {
+        ...rest,
+        store_id: data.is_global ? null : selectedStoreId,
+        period: data.period || null,
+      };
 
       if (editingPlaylist) {
+        // ✅ update SEM store_ids
         const { error } = await supabase
           .from('playlists')
           .update(payload)
           .eq('id', editingPlaylist.id);
 
         if (error) throw error;
+
+        // ✅ pivot: salva lojas específicas
+        if (data.scope === 'selected_stores') {
+          await replacePlaylistStores(editingPlaylist.id, store_ids || []);
+        } else {
+          // se não for selected_stores, zera vínculos
+          await replacePlaylistStores(editingPlaylist.id, []);
+        }
+
         toast.success('Playlist atualizada!');
       } else {
-        if (!user) {
-  toast.error('Você precisa estar logado');
-  return;
-}
+        // --- CRIAR (mantive seu fluxo original, só garantindo que playlists NÃO receba store_ids) ---
 
-// Regras do modelo C
-if (payload.scope === 'store' && !selectedStoreId) {
-  toast.error('Selecione uma loja no topo da página');
-  return;
-}
+        // Regras do modelo C (como você já tinha)
+        if (payload.scope === 'store' && !selectedStoreId) {
+          toast.error('Selecione uma loja no topo da página');
+          return;
+        }
 
-if (payload.scope === 'selected_stores' && (!payload.store_ids || payload.store_ids.length === 0)) {
-  toast.error('Selecione pelo menos 1 loja');
-  return;
-}
+        if (payload.scope === 'selected_stores' && (!store_ids || store_ids.length === 0)) {
+          toast.error('Selecione pelo menos 1 loja');
+          return;
+        }
 
-const storeIdToSave = payload.scope === 'store' ? selectedStoreId : null;
+        const storeIdToSave = payload.scope === 'store' ? selectedStoreId : null;
 
-const { data: inserted, error: insertError } = await supabase
-  .from('playlists')
-  .insert({
-    name: payload.name,
-    description: payload.description,
-    period: payload.period,
-    is_active: payload.is_active,
+        const { data: inserted, error: insertError } = await supabase
+          .from('playlists')
+          .insert({
+            name: payload.name,
+            description: payload.description,
+            period: payload.period,
+            is_active: payload.is_active,
 
-    // modelo novo
-    scope: payload.scope,
-    created_by: user.id,
-    store_id: storeIdToSave,
+            // modelo novo
+            scope: payload.scope,
+            created_by: user.id,
+            store_id: storeIdToSave,
 
-    // mantém compatível (você pode remover depois)
-    is_global: payload.scope !== 'store',
-  })
-  .select('id')
-  .single();
+            // mantém compatível (você pode remover depois)
+            is_global: payload.scope !== 'store',
+          })
+          .select('id')
+          .single();
 
-if (insertError) throw insertError;
+        if (insertError) throw insertError;
 
-// Se for lojas específicas, grava na tabela de ligação
-if (payload.scope === 'selected_stores') {
-  const rows = (payload.store_ids || []).map((sid: string) => ({
-    playlist_id: inserted.id,
-    store_id: sid,
-  }));
+        // Se for lojas específicas, grava na tabela de ligação
+        if (payload.scope === 'selected_stores') {
+          await replacePlaylistStores(inserted.id, store_ids || []);
+        }
 
-  const { error: linkErr } = await (supabase as any).from('playlist_stores').insert(rows);
-
-  if (linkErr) throw linkErr;
-}
-
-toast.success('Playlist criada!');
-
+        toast.success('Playlist criada!');
       }
 
       setDialogOpen(false);
       setEditingPlaylist(null);
       fetchData();
     } catch (error: any) {
+      console.error(error);
       toast.error(error.message || 'Erro ao salvar playlist');
     }
   };
@@ -270,11 +348,11 @@ toast.success('Playlist criada!');
       toast.error(error.message || 'Erro ao excluir playlist');
     }
   };
-    const openTracks = (playlistId: string) => {
-  setTracksPlaylistId(playlistId);
-  setTimeout(() => setTracksOpen(true), 0);
-};
 
+  const openTracks = (playlistId: string) => {
+    setTracksPlaylistId(playlistId);
+    setTimeout(() => setTracksOpen(true), 0);
+  };
 
   const filteredPlaylists = playlists.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase())
@@ -306,36 +384,38 @@ toast.success('Playlist criada!');
             Nova Playlist
           </Button>
         </div>
+
         <PlaylistTracksDialog
-  open={tracksOpen}
-  onOpenChange={(v) => {
-    setTracksOpen(v);
-    if (!v) setTracksPlaylistId(null);
-  }}
-  playlistId={tracksPlaylistId}
-/>
+          open={tracksOpen}
+          onOpenChange={(v) => {
+            setTracksOpen(v);
+            if (!v) setTracksPlaylistId(null);
+          }}
+          playlistId={tracksPlaylistId}
+        />
 
-{/* Loja selecionada */}
-<div className="max-w-md mb-4">
-<label className="text-sm font-medium">Loja</label>
- <Select value={selectedStoreId} onValueChange={setSelectedStoreId}>
-    <SelectTrigger>
-      <SelectValue placeholder="Selecione uma loja" />
-    </SelectTrigger>
+        {/* Loja selecionada */}
+        <div className="max-w-md mb-4">
+          <label className="text-sm font-medium">Loja</label>
+          <Select value={selectedStoreId} onValueChange={setSelectedStoreId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Selecione uma loja" />
+            </SelectTrigger>
 
-    <SelectContent>
-      {stores.map((store) => (
-        <SelectItem key={store.id} value={store.id}>
-          {store.name}
-        </SelectItem>
-      ))}
-    </SelectContent>
-  </Select>
-</div>
+            <SelectContent>
+              {stores.map((store) => (
+                <SelectItem key={store.id} value={store.id}>
+                  {store.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {/* Search */}
         <div className="relative max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          
+
           <Input
             placeholder="Buscar playlists..."
             value={search}
@@ -369,8 +449,8 @@ toast.success('Playlist criada!');
                   <div>
                     <h3 className="font-semibold text-foreground">{playlist.name}</h3>
                     <p className="text-sm text-muted-foreground">
-                    🎵 {trackCountByPlaylist[playlist.id] || 0} músicas
-                        </p>
+                      🎵 {trackCountByPlaylist[playlist.id] || 0} músicas
+                    </p>
                     {playlist.description && (
                       <p className="text-sm text-muted-foreground line-clamp-1">
                         {playlist.description}
@@ -386,18 +466,16 @@ toast.success('Playlist criada!');
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
-                       onSelect={(e) => { e.preventDefault(); openTracks(playlist.id);
-                           }}
-                            >
-                             Músicas
-                              </DropdownMenuItem>
-
+                      onSelect={(e) => { e.preventDefault(); openTracks(playlist.id); }}
+                    >
+                      Músicas
+                    </DropdownMenuItem>
 
                     <DropdownMenuItem onClick={() => { setEditingPlaylist(playlist); setDialogOpen(true); }}>
                       <Edit2 className="w-4 h-4 mr-2" />
                       Editar
                     </DropdownMenuItem>
-                    <DropdownMenuItem 
+                    <DropdownMenuItem
                       className="text-destructive"
                       onClick={() => handleDelete(playlist.id)}
                     >
@@ -445,68 +523,68 @@ toast.success('Playlist criada!');
                 {editingPlaylist ? 'Editar Playlist' : 'Nova Playlist'}
               </DialogTitle>
             </DialogHeader>
-            
 
             <Form {...form}>
               <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
                 <FormField
-  control={form.control}
-  name="scope"
-  render={({ field }) => (
-    <FormItem>
-      <FormLabel>Onde tocar?</FormLabel>
-      {form.watch('scope') === 'selected_stores' && (
-  <FormField
-    control={form.control}
-    name="store_ids"
-    render={({ field }) => (
-      <FormItem>
-        <FormLabel>Selecione as lojas</FormLabel>
-        <div className="space-y-2 max-h-44 overflow-auto rounded-md border border-border p-3">
-          {stores.map((store) => {
-            const checked = (field.value || []).includes(store.id);
+                  control={form.control}
+                  name="scope"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Onde tocar?</FormLabel>
 
-            return (
-              <label key={store.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={(e) => {
-                    const current = field.value || [];
-                    if (e.target.checked) {
-                      field.onChange([...current, store.id]);
-                    } else {
-                      field.onChange(current.filter((id: string) => id !== store.id));
-                    }
-                  }}
+                      {form.watch('scope') === 'selected_stores' && (
+                        <FormField
+                          control={form.control}
+                          name="store_ids"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Selecione as lojas</FormLabel>
+                              <div className="space-y-2 max-h-44 overflow-auto rounded-md border border-border p-3">
+                                {stores.map((store) => {
+                                  const checked = (field.value || []).includes(store.id);
+
+                                  return (
+                                    <label key={store.id} className="flex items-center gap-2 text-sm">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) => {
+                                          const current = field.value || [];
+                                          if (e.target.checked) {
+                                            field.onChange([...current, store.id]);
+                                          } else {
+                                            field.onChange(current.filter((id: string) => id !== store.id));
+                                          }
+                                        }}
+                                      />
+                                      <span>{store.name}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="store">Somente esta loja</SelectItem>
+                          <SelectItem value="all_assigned">Todas as minhas lojas</SelectItem>
+                          <SelectItem value="selected_stores">Selecionar lojas específicas</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-                <span>{store.name}</span>
-              </label>
-            );
-          })}
-        </div>
-        <FormMessage />
-      </FormItem>
-    )}
-  />
-)}
-
-      <Select onValueChange={field.onChange} value={field.value}>
-        <FormControl>
-          <SelectTrigger>
-            <SelectValue placeholder="Selecione" />
-          </SelectTrigger>
-        </FormControl>
-        <SelectContent>
-          <SelectItem value="store">Somente esta loja</SelectItem>
-          <SelectItem value="all_assigned">Todas as minhas lojas</SelectItem>
-          <SelectItem value="selected_stores">Selecionar lojas específicas</SelectItem>
-        </SelectContent>
-      </Select>
-      <FormMessage />
-    </FormItem>
-  )}
-/>
 
                 <FormField
                   control={form.control}
@@ -641,19 +719,20 @@ toast.success('Playlist criada!');
           </DialogContent>
         </Dialog>
       </div>
-      <PlaylistTracksDialog
-  open={tracksOpen}
-  onOpenChange={(v) => {
-    setTracksOpen(v);
-    if (!v) {
-      setTracksPlaylistId(null);
-      fetchData();
-    }
-  }}
-  playlistId={tracksPlaylistId}
-  onChanged={fetchData}
-/>
 
+      {/* Mantive esse trecho final como estava no seu arquivo */}
+      <PlaylistTracksDialog
+        open={tracksOpen}
+        onOpenChange={(v) => {
+          setTracksOpen(v);
+          if (!v) {
+            setTracksPlaylistId(null);
+            fetchData();
+          }
+        }}
+        playlistId={tracksPlaylistId}
+        onChanged={fetchData}
+      />
     </MainLayout>
   );
 }
