@@ -87,10 +87,6 @@ export default function AuthPage() {
 
         {/* Tabs */}
         <div className="flex gap-2 mb-8">
-git status
-git add .
-git commit -m "remove cadastro da tela de login"
-git push
 
         </div>
 
