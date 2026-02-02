@@ -8,7 +8,6 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
-
 type TrackRow = {
   id: string;
   title: string;
@@ -72,7 +71,7 @@ export default function TracksPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return tracks;
-    return tracks.filter(t =>
+    return tracks.filter((t) =>
       (t.title || '').toLowerCase().includes(q) ||
       (t.artist || '').toLowerCase().includes(q)
     );
@@ -121,6 +120,8 @@ export default function TracksPage() {
     try {
       // 1) Upload no Storage (bucket tracks)
       const ext = file.name.split('.').pop() || 'mp3';
+      void ext; // mantém a variável (caso você use depois)
+
       const safeName = file.name.replace(/[^\w.\-]+/g, '_');
       const path = `${user.id}/${Date.now()}_${safeName}`;
 
@@ -135,8 +136,7 @@ export default function TracksPage() {
 
       if (up.error) throw up.error;
 
-      // 2) Pegar URL pública (aqui o bucket é privado, então usamos signed URL depois no player)
-      // Para salvar no banco, salvamos o PATH do storage (recomendado)
+      // 2) Salvar no banco o PATH do storage
       const fileUrlToStore = path;
 
       // 3) Salvar no banco
@@ -192,6 +192,7 @@ export default function TracksPage() {
     }
   };
 
+  // ✅ DELETE CORRIGIDO: seguro, não quebra outros lugares
   const deleteTrack = async (t: TrackRow) => {
     if (!user) return;
 
@@ -203,16 +204,38 @@ export default function TracksPage() {
     if (!confirm(`Excluir "${t.title}"?`)) return;
 
     try {
-      // 1) Apaga do storage
-      const rm: any = await (supabase as any).storage.from('tracks').remove([t.file_url]);
-      if (rm.error) throw rm.error;
+      // ✅ Se estiver tocando, para antes de excluir
+      if (playingId === t.id) {
+        audio.pause();
+        audio.src = '';
+        setPlayingId(null);
+      }
 
-      // 2) Apaga do banco
-      const del: any = await (supabase as any).from('tracks').delete().eq('id', t.id);
+      // ✅ 1) Apaga do banco primeiro (mais seguro)
+      const del: any = await (supabase as any)
+        .from('tracks')
+        .delete()
+        .eq('id', t.id);
+
       if (del.error) throw del.error;
 
-      toast.success('Música excluída');
-      await fetchTracks();
+      // ✅ 2) Depois apaga o arquivo no Storage
+      if (t.file_url) {
+        const rm: any = await (supabase as any)
+          .storage
+          .from('tracks')
+          .remove([t.file_url]);
+
+        if (rm.error) {
+          console.warn('Apagou do banco, mas falhou no storage:', rm.error);
+          toast.error('Música removida do sistema, mas arquivo ficou no storage');
+        }
+      }
+
+      // ✅ 3) Some da lista na hora (sem recarregar tudo)
+      setTracks((prev) => prev.filter((x) => x.id !== t.id));
+
+      toast.success('Música excluída ✅');
     } catch (e: any) {
       toast.error(e?.message || 'Erro ao excluir');
     }
@@ -244,8 +267,16 @@ export default function TracksPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Input placeholder="Título (obrigatório)" value={title} onChange={(e) => setTitle(e.target.value)} />
-            <Input placeholder="Artista (opcional)" value={artist} onChange={(e) => setArtist(e.target.value)} />
+            <Input
+              placeholder="Título (obrigatório)"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+            <Input
+              placeholder="Artista (opcional)"
+              value={artist}
+              onChange={(e) => setArtist(e.target.value)}
+            />
             <Input
               type="file"
               accept=".mp3,audio/mpeg"
@@ -255,7 +286,11 @@ export default function TracksPage() {
 
           <div className="flex items-center gap-3">
             <Button onClick={uploadTrack} disabled={uploading}>
-              {uploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+              {uploading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4 mr-2" />
+              )}
               Enviar MP3
             </Button>
 
@@ -269,7 +304,11 @@ export default function TracksPage() {
 
         {/* Busca */}
         <div className="relative max-w-md">
-          <Input placeholder="Buscar por título ou artista..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input
+            placeholder="Buscar por título ou artista..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
 
         {/* Lista */}

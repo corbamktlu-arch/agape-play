@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState } from 'react'; 
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -26,10 +26,10 @@ const authSchema = z.object({
 type AuthFormData = z.infer<typeof authSchema>;
 
 export default function AuthPage() {
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [isSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const { signIn, signUp } = useAuth();
+  const { signIn } = useAuth();
   const navigate = useNavigate();
 
   const form = useForm<AuthFormData>({
@@ -44,44 +44,19 @@ export default function AuthPage() {
   const onSubmit = async (data: AuthFormData) => {
     setLoading(true);
     try {
-      if (isSignUp) {
-        if (!data.fullName || data.fullName.trim().length < 2) {
-          toast.error('Digite seu nome para cadastrar');
-          return;
+      const { error } = await signIn(data.email, data.password);
+
+      if (error) {
+        if (error.message.includes('Invalid login')) {
+          toast.error('Email ou senha incorretos');
+        } else {
+          toast.error(error.message);
         }
-
-        const { error } = await signUp(
-          data.email,
-          data.password,
-          data.fullName.trim() || 'Usuário'
-        );
-
-        if (error) {
-          if (error.message.includes('already registered')) {
-            toast.error('Este email já está cadastrado');
-          } else {
-            toast.error(error.message);
-          }
-          return;
-        }
-
-        toast.success('Conta criada com sucesso!');
-        navigate('/dashboard');
-      } else {
-        const { error } = await signIn(data.email, data.password);
-
-        if (error) {
-          if (error.message.includes('Invalid login')) {
-            toast.error('Email ou senha incorretos');
-          } else {
-            toast.error(error.message);
-          }
-          return;
-        }
-
-        toast.success('Bem-vindo de volta!');
-        navigate('/dashboard');
+        return;
       }
+
+      toast.success('Bem-vindo de volta!');
+      navigate('/dashboard');
     } finally {
       setLoading(false);
     }
@@ -98,14 +73,13 @@ export default function AuthPage() {
       <div className="glass-card w-full max-w-md p-8 rounded-2xl border border-border relative z-10 animate-scale-in">
         {/* Logo + Título */}
         <div className="flex flex-col items-center mb-8">
-  <div className="w-full flex justify-center mb-6">
-  <img
-    src="/logo.png"
-    alt="Logo ÁgapePlay"
-    className="w-full max-w-sm object-contain"
-  />
-</div>
-
+          <div className="w-full flex justify-center mb-6">
+            <img
+              src="/logo.png"
+              alt="Logo ÁgapePlay"
+              className="w-full max-w-sm object-contain"
+            />
+          </div>
 
           <h1 className="text-3xl font-extrabold text-foreground"></h1>
           <p className="text-muted-foreground mt-1"></p>
@@ -113,43 +87,16 @@ export default function AuthPage() {
 
         {/* Tabs */}
         <div className="flex gap-2 mb-8">
-          <Button
-            type="button"
-            variant={!isSignUp ? 'default' : 'ghost'}
-            className="flex-1"
-            onClick={() => setIsSignUp(false)}
-          >
-            Entrar
-          </Button>
-          <Button
-            type="button"
-            variant={isSignUp ? 'default' : 'ghost'}
-            className="flex-1"
-            onClick={() => setIsSignUp(true)}
-          >
-            Cadastrar
-          </Button>
+git status
+git add .
+git commit -m "remove cadastro da tela de login"
+git push
+
         </div>
 
         {/* Form */}
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
-            {isSignUp && (
-              <FormField
-                control={form.control}
-                name="fullName"
-                render={({ field }) => (
-                  <FormItem className="animate-slide-in">
-                    <FormLabel>Nome</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Seu nome" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
-
             <FormField
               control={form.control}
               name="email"
@@ -199,21 +146,10 @@ export default function AuthPage() {
 
             <Button type="submit" className="w-full" size="lg" disabled={loading}>
               {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {isSignUp ? 'Criar Conta' : 'Entrar'}
+              Entrar
             </Button>
           </form>
         </Form>
-
-        <p className="text-center text-sm text-muted-foreground mt-6">
-          {isSignUp ? 'Já tem uma conta?' : 'Não tem uma conta?'}{' '}
-          <button
-            type="button"
-            className="text-primary hover:underline font-medium"
-            onClick={() => setIsSignUp((v) => !v)}
-          >
-            {isSignUp ? 'Entrar' : 'Cadastrar'}
-          </button>
-        </p>
       </div>
     </div>
   );

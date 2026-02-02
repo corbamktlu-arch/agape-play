@@ -152,8 +152,8 @@ export function PlaylistTracksDialog({ open, onOpenChange, playlistId, onChanged
 
       setUploading(true);
 
-const { data: sessionData } = await supabase.auth.getSession();
-console.log("SESSION:", sessionData.session);
+      const { data: sessionData } = await supabase.auth.getSession();
+      console.log('SESSION:', sessionData.session);
 
       // ✅ necessário por causa da policy: uploaded_by = auth.uid()
       const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -218,7 +218,8 @@ console.log("SESSION:", sessionData.session);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="glass-card border-border max-w-2xl">
+      {/* ✅ trava largura do modal (não estoura) */}
+      <DialogContent className="glass-card border-border w-[min(42rem,95vw)] max-w-[95vw] overflow-hidden">
         <DialogHeader>
           <DialogTitle className="text-xl font-bold">Músicas da Playlist</DialogTitle>
         </DialogHeader>
@@ -260,23 +261,31 @@ console.log("SESSION:", sessionData.session);
               </div>
             </div>
 
-            <div className="max-h-[420px] overflow-auto rounded-xl border border-border">
+            {/* ✅ só scroll vertical; sem scroll lateral */}
+            <div className="max-h-[420px] overflow-y-auto overflow-x-hidden rounded-xl border border-border">
               {filteredTracks.map((t) => {
                 const linked = linkedSet.has(t.id);
 
                 return (
                   <div
                     key={t.id}
-                    className="flex items-center justify-between gap-3 p-3 border-b border-border last:border-b-0"
+                    className="flex items-center gap-3 p-3 border-b border-border last:border-b-0 w-full min-w-0"
                   >
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{t.title}</div>
-                      <div className="text-sm text-muted-foreground truncate">{t.artist || '—'}</div>
+                    {/* ✅ texto ocupa espaço e corta com ... sem empurrar botão */}
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      <div className="font-medium truncate" title={t.title}>
+                        {t.title}
+                      </div>
+                      <div className="text-sm text-muted-foreground truncate" title={t.artist || '—'}>
+                        {t.artist || '—'}
+                      </div>
                     </div>
 
+                    {/* ✅ botão fixo */}
                     {linked ? (
                       <Button
                         variant="ghost"
+                        className="shrink-0"
                         disabled={savingId === t.id}
                         onClick={() => removeTrack(t.id)}
                       >
@@ -284,6 +293,7 @@ console.log("SESSION:", sessionData.session);
                       </Button>
                     ) : (
                       <Button
+                        className="shrink-0"
                         disabled={savingId === t.id}
                         onClick={() => addTrack(t.id)}
                       >
