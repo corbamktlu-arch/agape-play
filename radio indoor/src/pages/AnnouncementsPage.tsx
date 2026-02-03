@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'; 
+import { useEffect, useState, useRef } from 'react';  
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -88,7 +88,6 @@ export default function AnnouncementsPage() {
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const [currentPlayingUrl, setCurrentPlayingUrl] = useState<string | null>(null);
 
-
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [announcementStores, setAnnouncementStores] = useState<Record<string, string[]>>({});
@@ -127,19 +126,30 @@ export default function AnnouncementsPage() {
     }
   }, [user]);
 
+  // ✅ helper: calcula o alvo REAL pelo relacionamento announcement_stores
+  const computeTargetType = (announcementId: string): AnnouncementTarget => {
+    const ids = announcementStores[announcementId] || [];
+    if (ids.length === 0) return 'global';
+    if (ids.length === 1) return 'individual';
+    return 'group';
+  };
+
   useEffect(() => {
     if (editingAnnouncement) {
       const storeIds = announcementStores[editingAnnouncement.id] || [];
+      const computedTarget = computeTargetType(editingAnnouncement.id);
+
       form.reset({
         title: editingAnnouncement.title,
-        // ✅ esses campos podem não existir no banco (mantemos a UI e evitamos quebrar)
         description: (editingAnnouncement as any).description || '',
-        target_type: ((editingAnnouncement as any).target_type || 'global') as any,
+        // ✅ usa o alvo REAL (baseado em announcement_stores)
+        target_type: computedTarget as any,
         priority: (editingAnnouncement as any).priority ?? 3,
         category: (editingAnnouncement as any).category || '',
         is_active: editingAnnouncement.is_active,
         store_ids: storeIds,
       });
+
       setAudioUrl(editingAnnouncement.file_url);
     } else {
       form.reset({
@@ -160,23 +170,34 @@ export default function AnnouncementsPage() {
     setLoading(true);
     try {
       const [announcementsRes, storesRes, announcementStoresRes] = await Promise.all([
-  (supabase as any).from('announcements').select('*').order('created_at', { ascending: false }),
-  (supabase as any).from('stores').select('*').eq('status', 'active'),
-  (supabase as any).from('announcement_stores').select('*'),
-]);
+        (supabase as any).from('announcements').select('*').order('created_at', { ascending: false }),
+        (supabase as any).from('stores').select('*').eq('status', 'active'),
+        (supabase as any).from('announcement_stores').select('*'),
+      ]);
 
-      if (announcementsRes.data) setAnnouncements(announcementsRes.data as any);  
-      if (storesRes.data) setStores(storesRes.data as any);
-
+      // monta mapa announcement_id -> [store_id...]
+      const storeMap: Record<string, string[]> = {};
       if (announcementStoresRes.data) {
-        const storeMap: Record<string, string[]> = {};
         announcementStoresRes.data.forEach((as: any) => {
-          if (!storeMap[as.announcement_id]) {
-            storeMap[as.announcement_id] = [];
-          }
+          if (!storeMap[as.announcement_id]) storeMap[as.announcement_id] = [];
           storeMap[as.announcement_id].push(as.store_id);
         });
-        setAnnouncementStores(storeMap);
+      }
+      setAnnouncementStores(storeMap);
+
+      if (storesRes.data) setStores(storesRes.data as any);
+
+      // ✅ injeta target_type calculado em cada anúncio (sem depender de coluna no banco)
+      if (announcementsRes.data) {
+        const withTarget = (announcementsRes.data as any[]).map((a) => {
+          const ids = storeMap[a.id] || [];
+          const target_type: AnnouncementTarget =
+            ids.length === 0 ? 'global' : ids.length === 1 ? 'individual' : 'group';
+
+          return { ...a, target_type };
+        });
+
+        setAnnouncements(withTarget as any);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -244,10 +265,8 @@ export default function AnnouncementsPage() {
         return;
       }
 
-      // ✅ MUITO IMPORTANTE:
-      // A tabela announcements (no seu Supabase) só tem:
-      // title, file_url, is_active, store_id, created_at, id
-      // Então aqui enviamos SOMENTE colunas existentes, pra não dar 400/PGST204.
+      // ✅ Mantém compatível com seu banco atual
+      // store_id só fica preenchido quando é INDIVIDUAL (1 loja)
       const payload = {
         title: data.title,
         file_url: fileUrl!,
@@ -269,14 +288,13 @@ export default function AnnouncementsPage() {
         if (error) throw error;
         announcementId = editingAnnouncement.id;
 
-        // Update store relationships
+        // remove relacionamentos antigos
         const { error: delRelErr } = await (supabase as any)
-  .from('announcement_stores')
-  .delete()
-  .eq('announcement_id', announcementId);
+          .from('announcement_stores')
+          .delete()
+          .eq('announcement_id', announcementId);
 
-if (delRelErr) throw delRelErr;
-
+        if (delRelErr) throw delRelErr;
 
         toast.success('Aviso atualizado!');
       } else {
@@ -291,18 +309,16 @@ if (delRelErr) throw delRelErr;
         toast.success('Aviso criado!');
       }
 
-      // Add store relationships for individual/group
+      // cria relacionamentos se NÃO for global
       if (data.target_type !== 'global' && data.store_ids && data.store_ids.length > 0) {
         const storeRelations = data.store_ids.map(storeId => ({
           announcement_id: announcementId,
           store_id: storeId,
         }));
 
-       const { error: relErr } = await (supabase as any)
-  .from('announcement_stores')
-  .insert(storeRelations);
-
-if (relErr) throw relErr;
+        const { error: relErr } = await (supabase as any)
+          .from('announcement_stores')
+          .insert(storeRelations);
 
         if (relErr) throw relErr;
       }
@@ -331,26 +347,22 @@ if (relErr) throw relErr;
   // ✅ ÚNICA ALTERAÇÃO: aviso toca mais alto (0.9) e volta para 0.7 ao terminar
   const playAudio = async (url: string) => {
     try {
-      // se ainda não existe, cria uma vez
       if (!audioPlayerRef.current) {
         audioPlayerRef.current = new Audio();
       }
 
       const audio = audioPlayerRef.current;
 
-      // ✅ Volume normal e volume do aviso
       const normalVolume = 0.7; // 70%
       const avisoVolume = 0.9;  // 90%
 
-      // ✅ sempre toca o aviso mais alto
       audio.muted = false;
       audio.volume = avisoVolume;
 
-      // se clicou no mesmo áudio:
       if (currentPlayingUrl === url) {
         if (!audio.paused) {
           audio.pause();
-          audio.volume = normalVolume; // volta
+          audio.volume = normalVolume;
         } else {
           audio.volume = avisoVolume;
           await audio.play();
@@ -358,17 +370,14 @@ if (relErr) throw relErr;
         return;
       }
 
-      // se é outro áudio, para o anterior
       audio.pause();
       audio.currentTime = 0;
 
-      // coloca o aviso alto
       audio.volume = avisoVolume;
 
       audio.src = url;
       setCurrentPlayingUrl(url);
 
-      // ✅ quando terminar, volta o volume normal
       audio.onended = () => {
         audio.volume = normalVolume;
       };
@@ -424,98 +433,105 @@ if (relErr) throw relErr;
 
         {/* Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredAnnouncements.map((announcement) => (
-            <div
-              key={announcement.id}
-              className={cn(
-                'glass-card rounded-xl border p-6 transition-all duration-300',
-                'hover:shadow-lg hover:border-primary/20',
-                !announcement.is_active && 'opacity-60'
-              )}
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    'p-3 rounded-lg',
-                    (announcement as any).target_type === 'global' ? 'bg-accent/20' : 'bg-warning/20'
-                  )}>
-                    <Megaphone className={cn(
-                      'w-6 h-6',
-                      (announcement as any).target_type === 'global' ? 'text-accent' : 'text-warning'
-                    )} />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-foreground">{announcement.title}</h3>
-                    {(announcement as any).category && (
-                      <p className="text-sm text-muted-foreground capitalize">
-                        {categoryOptions.find(c => c.value === (announcement as any).category)?.label || (announcement as any).category}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon">
-                      <MoreVertical className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => playAudio(announcement.file_url)}>
-                      <Play className="w-4 h-4 mr-2" />
-                      Reproduzir
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => { setEditingAnnouncement(announcement); setDialogOpen(true); }}>
-                      <Edit2 className="w-4 h-4 mr-2" />
-                      Editar
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => { setScheduleAnnouncement(announcement); setScheduleDialogOpen(true); }}>
-                      <Clock className="w-4 h-4 mr-2" />
-                      Agendamento
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="text-destructive"
-                      onClick={() => handleDelete(announcement.id)}
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Excluir
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+          {filteredAnnouncements.map((announcement) => {
+            // ✅ usa o target_type calculado/injetado (sem depender do banco)
+            const ttype = ((announcement as any).target_type || 'global') as AnnouncementTarget;
 
-              <div className="flex flex-wrap gap-2 mb-4">
-                <Badge
-                  variant="secondary"
-                  className={cn(
-                    (announcement as any).target_type === 'global' && 'bg-accent/20 text-accent border-accent/30',
-                    (announcement as any).target_type === 'group' && 'bg-warning/20 text-warning border-warning/30',
-                    (announcement as any).target_type === 'individual' && 'bg-primary/20 text-primary border-primary/30'
-                  )}
-                >
-                  {getTargetLabel(((announcement as any).target_type || 'global') as any)}
-                </Badge>
-                <Badge variant="outline">
-                  Prioridade {(announcement as any).priority ?? 3}
-                </Badge>
-                {(announcement as any).duration_seconds && (
-                  <Badge variant="outline" className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {formatDuration((announcement as any).duration_seconds)}
-                  </Badge>
+            return (
+              <div
+                key={announcement.id}
+                className={cn(
+                  'glass-card rounded-xl border p-6 transition-all duration-300',
+                  'hover:shadow-lg hover:border-primary/20',
+                  !announcement.is_active && 'opacity-60'
                 )}
-              </div>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                className="w-full"
-                onClick={() => playAudio(announcement.file_url)}
               >
-                <Play className="w-4 h-4 mr-2" />
-                Reproduzir
-              </Button>
-            </div>
-          ))}
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className={cn(
+                      'p-3 rounded-lg',
+                      ttype === 'global' ? 'bg-accent/20' : 'bg-warning/20'
+                    )}>
+                      <Megaphone className={cn(
+                        'w-6 h-6',
+                        ttype === 'global' ? 'text-accent' : 'text-warning'
+                      )} />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-foreground">{announcement.title}</h3>
+                      {(announcement as any).category && (
+                        <p className="text-sm text-muted-foreground capitalize">
+                          {categoryOptions.find(c => c.value === (announcement as any).category)?.label || (announcement as any).category}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon">
+                        <MoreVertical className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => playAudio(announcement.file_url)}>
+                        <Play className="w-4 h-4 mr-2" />
+                        Reproduzir
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => { setEditingAnnouncement(announcement); setDialogOpen(true); }}>
+                        <Edit2 className="w-4 h-4 mr-2" />
+                        Editar
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => { setScheduleAnnouncement(announcement); setScheduleDialogOpen(true); }}>
+                        <Clock className="w-4 h-4 mr-2" />
+                        Agendamento
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => handleDelete(announcement.id)}
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Excluir
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <Badge
+                    variant="secondary"
+                    className={cn(
+                      ttype === 'global' && 'bg-accent/20 text-accent border-accent/30',
+                      ttype === 'group' && 'bg-warning/20 text-warning border-warning/30',
+                      ttype === 'individual' && 'bg-primary/20 text-primary border-primary/30'
+                    )}
+                  >
+                    {getTargetLabel(ttype as any)}
+                  </Badge>
+
+                  <Badge variant="outline">
+                    Prioridade {(announcement as any).priority ?? 3}
+                  </Badge>
+
+                  {(announcement as any).duration_seconds && (
+                    <Badge variant="outline" className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {formatDuration((announcement as any).duration_seconds)}
+                    </Badge>
+                  )}
+                </div>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => playAudio(announcement.file_url)}
+                >
+                  <Play className="w-4 h-4 mr-2" />
+                  Reproduzir
+                </Button>
+              </div>
+            );
+          })}
         </div>
 
         {filteredAnnouncements.length === 0 && (
