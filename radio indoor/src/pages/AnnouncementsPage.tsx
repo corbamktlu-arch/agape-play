@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react'; 
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -328,6 +328,7 @@ if (relErr) throw relErr;
     }
   };
 
+  // ✅ ÚNICA ALTERAÇÃO: travar volume do aviso em 1 (sem mexer no resto)
   const playAudio = async (url: string) => {
   try {
     // se ainda não existe, cria uma vez
@@ -337,11 +338,16 @@ if (relErr) throw relErr;
 
     const audio = audioPlayerRef.current;
 
+    // ✅ GARANTE sempre volume correto do aviso
+    audio.muted = false;
+    audio.volume = 1;
+
     // se clicou no mesmo áudio:
     if (currentPlayingUrl === url) {
       if (!audio.paused) {
         audio.pause();
       } else {
+        audio.volume = 1; // ✅ reforça antes de tocar
         await audio.play();
       }
       return;
@@ -351,9 +357,14 @@ if (relErr) throw relErr;
     audio.pause();
     audio.currentTime = 0;
 
+    // ✅ reforça volume antes de carregar o novo aviso
+    audio.volume = 1;
+
     audio.src = url;
     setCurrentPlayingUrl(url);
 
+    // ✅ reforça volume antes do play
+    audio.volume = 1;
     await audio.play();
   } catch (e) {
     console.error(e);
