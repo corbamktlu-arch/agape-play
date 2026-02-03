@@ -1,9 +1,9 @@
 export const siteConfig = {
   name: "ÁgapePlay",
   description: "Rádio Indoor Inteligente Para Lojas",
-  whatsappNumber: "5588999999999",
+  whatsappNumber: "5588997827859",
   whatsappMessage: "Olá! Quero conhecer o ÁgapePlay para minha loja. Pode me explicar como funciona e como contratar?",
-  loginUrl: "https://seusite.com/login",
+  loginUrl: "https://app.agapeplay.site/",
   
   getWhatsAppUrl: () => {
     const message = encodeURIComponent(siteConfig.whatsappMessage);
