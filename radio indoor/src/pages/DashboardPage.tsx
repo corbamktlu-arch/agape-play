@@ -22,7 +22,7 @@ import type {
 } from "@/lib/supabase-types";
 
 /** ✅ Offline rápido em 25s */
-const ONLINE_WINDOW_MS = 25_000;
+const ONLINE_WINDOW_MS = 60_000;
 
 export default function DashboardPage() {
   const { user, loading: authLoading } = useAuth();
