@@ -328,50 +328,57 @@ if (relErr) throw relErr;
     }
   };
 
-  // ✅ ÚNICA ALTERAÇÃO: travar volume do aviso em 1 (sem mexer no resto)
+  // ✅ ÚNICA ALTERAÇÃO: aviso toca mais alto (0.9) e volta para 0.7 ao terminar
   const playAudio = async (url: string) => {
-  try {
-    // se ainda não existe, cria uma vez
-    if (!audioPlayerRef.current) {
-      audioPlayerRef.current = new Audio();
-    }
-
-    const audio = audioPlayerRef.current;
-
-    // ✅ GARANTE sempre volume correto do aviso
-    audio.muted = false;
-    audio.volume = 1;
-
-    // se clicou no mesmo áudio:
-    if (currentPlayingUrl === url) {
-      if (!audio.paused) {
-        audio.pause();
-      } else {
-        audio.volume = 1; // ✅ reforça antes de tocar
-        await audio.play();
+    try {
+      // se ainda não existe, cria uma vez
+      if (!audioPlayerRef.current) {
+        audioPlayerRef.current = new Audio();
       }
-      return;
+
+      const audio = audioPlayerRef.current;
+
+      // ✅ Volume normal e volume do aviso
+      const normalVolume = 0.7; // 70%
+      const avisoVolume = 0.9;  // 90%
+
+      // ✅ sempre toca o aviso mais alto
+      audio.muted = false;
+      audio.volume = avisoVolume;
+
+      // se clicou no mesmo áudio:
+      if (currentPlayingUrl === url) {
+        if (!audio.paused) {
+          audio.pause();
+          audio.volume = normalVolume; // volta
+        } else {
+          audio.volume = avisoVolume;
+          await audio.play();
+        }
+        return;
+      }
+
+      // se é outro áudio, para o anterior
+      audio.pause();
+      audio.currentTime = 0;
+
+      // coloca o aviso alto
+      audio.volume = avisoVolume;
+
+      audio.src = url;
+      setCurrentPlayingUrl(url);
+
+      // ✅ quando terminar, volta o volume normal
+      audio.onended = () => {
+        audio.volume = normalVolume;
+      };
+
+      await audio.play();
+    } catch (e) {
+      console.error(e);
+      toast.error('Não foi possível reproduzir o áudio');
     }
-
-    // se é outro áudio, para o anterior e toca o novo
-    audio.pause();
-    audio.currentTime = 0;
-
-    // ✅ reforça volume antes de carregar o novo aviso
-    audio.volume = 1;
-
-    audio.src = url;
-    setCurrentPlayingUrl(url);
-
-    // ✅ reforça volume antes do play
-    audio.volume = 1;
-    await audio.play();
-  } catch (e) {
-    console.error(e);
-    toast.error('Não foi possível reproduzir o áudio');
-  }
-};
-
+  };
 
   const filteredAnnouncements = announcements.filter(a =>
     a.title.toLowerCase().includes(search.toLowerCase())
