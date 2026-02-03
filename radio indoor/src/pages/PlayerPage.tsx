@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'; 
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Play,
@@ -202,57 +202,7 @@ export default function PlayerPage() {
     };
   }, []);
 
-  /** =========================
-   * ✅ NOVO: buscar avisos corretos por loja:
-   * - globais (sem relacionamento em announcement_stores)
-   * - + avisos ligados à loja atual (announcement_stores.store_id = storeId)
-   * ========================= */
-  const fetchAnnouncementsForStore = useCallback(async (sid: string) => {
-    // 1) Avisos da loja (relacionamento)
-    const { data: targetedRows, error: targetedErr } = await (supabase as any)
-      .from('announcement_stores')
-      .select('announcement_id, announcements(*)')
-      .eq('store_id', sid);
-
-    if (targetedErr) throw targetedErr;
-
-    const targeted: Announcement[] = (targetedRows ?? [])
-      .map((r: any) => r.announcements)
-      .filter(Boolean)
-      .filter((a: any) => a.is_active);
-
-    // 2) Descobrir quais anúncios têm qualquer relacionamento (para excluir do "global")
-    const { data: rels, error: relErr } = await (supabase as any)
-      .from('announcement_stores')
-      .select('announcement_id');
-
-    if (relErr) throw relErr;
-
-    const relatedIds = Array.from(
-      new Set((rels ?? []).map((r: any) => r.announcement_id))
-    );
-
-    // 3) Globais = announcements ativos que NÃO aparecem em announcement_stores
-    let globalQuery = (supabase as any)
-      .from('announcements')
-      .select('*')
-      .eq('is_active', true);
-
-    if (relatedIds.length > 0) {
-      globalQuery = globalQuery.not('id', 'in', `(${relatedIds.join(',')})`);
-    }
-
-    const { data: globals, error: globalsErr } = await globalQuery;
-    if (globalsErr) throw globalsErr;
-
-    // 4) Junta e remove duplicados
-    const all = [...targeted, ...((globals ?? []) as Announcement[])];
-    const unique = Array.from(new Map(all.map((a: any) => [a.id, a])).values());
-
-    return unique as Announcement[];
-  }, []);
-
-  /** 1) Dados gerais (lista lojas + anúncios filtrados por loja) */
+  /** 1) Dados gerais (lista lojas + avisos da loja via RPC) */
   const fetchData = useCallback(async () => {
     setLoadingData(true);
     try {
@@ -264,20 +214,50 @@ export default function PlayerPage() {
 
       if (storesRes.data) setStores(storesRes.data as unknown as Store[]);
 
-      // ✅ Se não tem storeId (tela de seleção), não precisa carregar avisos
+      // ✅ sem loja selecionada, não carrega avisos
       if (!storeId) {
         setAnnouncements([]);
         return;
       }
 
-      const list = await fetchAnnouncementsForStore(storeId);
-      setAnnouncements(list);
+      // ✅ pega avisos filtrados (global + da loja) via RPC
+     // ✅ 1) Avisos ligados à loja atual
+const { data: targetedRows, error: targetedErr } = await (supabase as any)
+  .from("announcement_stores")
+  .select("announcement_id, announcements(*)")
+  .eq("store_id", storeId);
+
+if (targetedErr) throw targetedErr;
+
+const targeted: Announcement[] = (targetedRows ?? [])
+  .map((r: any) => r.announcements)
+  .filter(Boolean)
+  .filter((a: any) => a.is_active);
+
+// ✅ 2) Avisos globais (store_id NULL)
+const { data: globals, error: globalsErr } = await supabase
+  .from("announcements")
+  .select("*")
+  .eq("is_active", true)
+  .is("store_id", null);
+
+if (globalsErr) throw globalsErr;
+
+// ✅ 3) Junta tudo sem duplicar
+const all = [...targeted, ...(globals ?? [])];
+
+const unique = Array.from(
+  new Map(all.map((a) => [a.id, a])).values()
+);
+
+setAnnouncements(unique as unknown as Announcement[]);
+
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
       setLoadingData(false);
     }
-  }, [storeId, fetchAnnouncementsForStore]);
+  }, [storeId]);
 
   /** ✅ Buscar schedules (globais + da loja) */
   const fetchSchedules = useCallback(async () => {
@@ -397,17 +377,16 @@ export default function PlayerPage() {
 
   /** 5) Quando tiver storeId, carrega loja + playlist + tracks */
   useEffect(() => {
-  if (!authLoading && user && storeId) {
-    loadStoreAndPlaylist();
-  } else if (!storeId) {
-    setStore(null);
-    setTracks([]);
-    setCurrentTrack(null);
-    setLoadingPage(false);
-    setAnnouncements([]);
-  }
-}, [authLoading, user, storeId, loadStoreAndPlaylist]);
-
+    if (!authLoading && user && storeId) {
+      loadStoreAndPlaylist();
+    } else if (!storeId) {
+      setStore(null);
+      setTracks([]);
+      setCurrentTrack(null);
+      setLoadingPage(false);
+      setAnnouncements([]);
+    }
+  }, [authLoading, user, storeId, loadStoreAndPlaylist]);
 
   /** 6) Quando currentTrack muda, seta src só se mudou + restaura tempo salvo */
   useEffect(() => {
@@ -541,13 +520,13 @@ export default function PlayerPage() {
       volume,
       shouldBePlaying,
     });
-  }, [volume, storeId, currentTrack?.id, shouldBePlaying]);
+  }, [volume, storeId, currentTrack?.id, shouldBePlaying, currentTime]);
 
   /** =========================
    *  ✅ Force resume (anti-loop)
    *  ========================= */
   const forceResume = useCallback(
-    async (reason?: string) => {
+    async (_reason?: string) => {
       if (isAnnouncementPlayingRef.current) return;
 
       const el = audioRef.current;
@@ -683,6 +662,11 @@ export default function PlayerPage() {
     return unplayed[Math.floor(Math.random() * unplayed.length)];
   }, [tracks, playedTracks]);
 
+  const playNextTrack = useCallback(() => {
+    const next = getNextTrack();
+    if (next) playTrack(next);
+  }, [getNextTrack]);
+
   const playTrack = useCallback(
     (track: Track) => {
       setShouldBePlaying(true);
@@ -732,13 +716,8 @@ export default function PlayerPage() {
         });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [storeId, volume]
+    [storeId, volume, playNextTrack]
   );
-
-  const playNextTrack = useCallback(() => {
-    const next = getNextTrack();
-    if (next) playTrack(next);
-  }, [getNextTrack, playTrack]);
 
   const handlePlay = () => {
     setShouldBePlaying(true);
@@ -945,7 +924,7 @@ export default function PlayerPage() {
         toast.error('Não foi possível tocar o aviso.');
       });
     },
-    [volume]
+    []
   );
 
   /** ✅ MOTOR: quando “vence”, deixa aviso PENDENTE (toca no fim da música) */
@@ -1013,9 +992,10 @@ export default function PlayerPage() {
     setIsPlaying(false);
 
     setTimeout(() => {
-      playNextTrack();
+      const next = getNextTrack();
+      if (next) playTrack(next);
     }, 300);
-  }, [currentTrack?.id, playNextTrack, shouldBePlaying, tracks.length]);
+  }, [currentTrack?.id, shouldBePlaying, tracks.length, getNextTrack, playTrack]);
 
   const handleStoreSelect = (selectedStore: Store) => {
     navigate(`/player?store=${selectedStore.id}`, { replace: true });
@@ -1131,10 +1111,7 @@ export default function PlayerPage() {
         </div>
 
         <div className="flex items-center gap-4">
-          <StatusBadge
-            status={isConnected ? 'live' : 'offline'}
-            label={isConnected ? 'Conectado' : 'Desconectado'}
-          />
+          <StatusBadge status={isConnected ? 'live' : 'offline'} label={isConnected ? 'Conectado' : 'Desconectado'} />
           <span className="text-sm text-muted-foreground">{period}</span>
           <Button variant="ghost" size="icon" onClick={fetchData} disabled={loadingData}>
             <RefreshCw className="w-4 h-4" />
