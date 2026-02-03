@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react'; 
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Play,
@@ -154,8 +154,6 @@ export default function PlayerPage() {
 
   /** =========================
    * ✅ FUNÇÃO ÚNICA pra gravar sessão (SEM QUEBRAR NADA)
-   * - usada no heartbeat
-   * - usada no pause / sair da aba
    * ========================= */
   const writeSession = useCallback(
     async (force?: { status?: 'playing' | 'stopped'; is_playing?: boolean }) => {
@@ -173,7 +171,7 @@ export default function PlayerPage() {
         store_id: store.id,
         status: finalStatus,
         last_seen_at: nowIso,
-        last_heartbeat: nowIso, // ✅ pro dashboard
+        last_heartbeat: nowIso,
         is_playing: finalIsPlaying,
         current_volume: volume,
         current_track_id: currentTrack?.id || null,
@@ -204,23 +202,82 @@ export default function PlayerPage() {
     };
   }, []);
 
-  /** 1) Dados gerais (lista lojas + anúncios) */
+  /** =========================
+   * ✅ NOVO: buscar avisos corretos por loja:
+   * - globais (sem relacionamento em announcement_stores)
+   * - + avisos ligados à loja atual (announcement_stores.store_id = storeId)
+   * ========================= */
+  const fetchAnnouncementsForStore = useCallback(async (sid: string) => {
+    // 1) Avisos da loja (relacionamento)
+    const { data: targetedRows, error: targetedErr } = await (supabase as any)
+      .from('announcement_stores')
+      .select('announcement_id, announcements(*)')
+      .eq('store_id', sid);
+
+    if (targetedErr) throw targetedErr;
+
+    const targeted: Announcement[] = (targetedRows ?? [])
+      .map((r: any) => r.announcements)
+      .filter(Boolean)
+      .filter((a: any) => a.is_active);
+
+    // 2) Descobrir quais anúncios têm qualquer relacionamento (para excluir do "global")
+    const { data: rels, error: relErr } = await (supabase as any)
+      .from('announcement_stores')
+      .select('announcement_id');
+
+    if (relErr) throw relErr;
+
+    const relatedIds = Array.from(
+      new Set((rels ?? []).map((r: any) => r.announcement_id))
+    );
+
+    // 3) Globais = announcements ativos que NÃO aparecem em announcement_stores
+    let globalQuery = (supabase as any)
+      .from('announcements')
+      .select('*')
+      .eq('is_active', true);
+
+    if (relatedIds.length > 0) {
+      globalQuery = globalQuery.not('id', 'in', `(${relatedIds.join(',')})`);
+    }
+
+    const { data: globals, error: globalsErr } = await globalQuery;
+    if (globalsErr) throw globalsErr;
+
+    // 4) Junta e remove duplicados
+    const all = [...targeted, ...((globals ?? []) as Announcement[])];
+    const unique = Array.from(new Map(all.map((a: any) => [a.id, a])).values());
+
+    return unique as Announcement[];
+  }, []);
+
+  /** 1) Dados gerais (lista lojas + anúncios filtrados por loja) */
   const fetchData = useCallback(async () => {
     setLoadingData(true);
     try {
-      const [storesRes, announcementsRes] = await Promise.all([
-        supabase.from('stores').select('*').eq('status', 'active').order('name'),
-        supabase.from('announcements').select('*').eq('is_active', true),
-      ]);
+      const storesRes = await supabase
+        .from('stores')
+        .select('*')
+        .eq('status', 'active')
+        .order('name');
 
       if (storesRes.data) setStores(storesRes.data as unknown as Store[]);
-      if (announcementsRes.data) setAnnouncements(announcementsRes.data as unknown as Announcement[]);
+
+      // ✅ Se não tem storeId (tela de seleção), não precisa carregar avisos
+      if (!storeId) {
+        setAnnouncements([]);
+        return;
+      }
+
+      const list = await fetchAnnouncementsForStore(storeId);
+      setAnnouncements(list);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
       setLoadingData(false);
     }
-  }, []);
+  }, [storeId, fetchAnnouncementsForStore]);
 
   /** ✅ Buscar schedules (globais + da loja) */
   const fetchSchedules = useCallback(async () => {
@@ -299,7 +356,9 @@ export default function PlayerPage() {
 
       if (linksRes.error) throw linksRes.error;
 
-      const loadedTracks: Track[] = (linksRes.data || []).map((row: any) => row.tracks).filter(Boolean);
+      const loadedTracks: Track[] = (linksRes.data || [])
+        .map((row: any) => row.tracks)
+        .filter(Boolean);
 
       setTracks(loadedTracks);
 
@@ -340,13 +399,16 @@ export default function PlayerPage() {
   useEffect(() => {
     if (!authLoading && user && storeId) {
       loadStoreAndPlaylist();
+      // ✅ importante: ao trocar storeId, recarrega avisos corretos também
+      fetchData();
     } else if (!storeId) {
       setStore(null);
       setTracks([]);
       setCurrentTrack(null);
       setLoadingPage(false);
+      setAnnouncements([]);
     }
-  }, [authLoading, user, storeId, loadStoreAndPlaylist]);
+  }, [authLoading, user, storeId, loadStoreAndPlaylist, fetchData]);
 
   /** 6) Quando currentTrack muda, seta src só se mudou + restaura tempo salvo */
   useEffect(() => {
@@ -386,7 +448,7 @@ export default function PlayerPage() {
     };
   }, [currentTrack, storeId, shouldBePlaying]);
 
-    /** 7) Heartbeat (com update imediato + intervalo coerente) */
+  /** 7) Heartbeat (com update imediato + intervalo coerente) */
   const updateSession = useCallback(async () => {
     if (!store) return;
 
@@ -396,7 +458,7 @@ export default function PlayerPage() {
       store_id: store.id,
       status: isPlaying ? 'playing' : 'stopped',
       last_seen_at: nowIso,
-      last_heartbeat: nowIso, // ✅ para o dashboard
+      last_heartbeat: nowIso,
       is_playing: isPlaying,
       current_volume: volume,
       current_track_id: currentTrack?.id || null,
@@ -408,70 +470,65 @@ export default function PlayerPage() {
 
     if (error) console.log('updateSession error:', error);
   }, [store, isPlaying, volume, currentTrack?.id]);
+
   // ✅ marca STOPPED quando sair/fechar
-const markStoppedNow = useCallback(async () => {
-  if (!store) return;
+  const markStoppedNow = useCallback(async () => {
+    if (!store) return;
 
-  const nowIso = new Date().toISOString();
+    const nowIso = new Date().toISOString();
 
-  const sessionData = {
-    store_id: store.id,
-    status: 'stopped',
-    last_seen_at: nowIso,
-    last_heartbeat: nowIso,
-    is_playing: false,
-    current_volume: volume,
-    current_track_id: currentTrack?.id || null,
-  };
+    const sessionData = {
+      store_id: store.id,
+      status: 'stopped',
+      last_seen_at: nowIso,
+      last_heartbeat: nowIso,
+      is_playing: false,
+      current_volume: volume,
+      current_track_id: currentTrack?.id || null,
+    };
 
-  const { error } = await supabase
-    .from('player_sessions')
-    .upsert(sessionData, { onConflict: 'store_id' });
+    const { error } = await supabase
+      .from('player_sessions')
+      .upsert(sessionData, { onConflict: 'store_id' });
 
-  if (error) console.log('markStoppedNow error:', error);
-}, [store, volume, currentTrack?.id]);
+    if (error) console.log('markStoppedNow error:', error);
+  }, [store, volume, currentTrack?.id]);
 
-
-  // ✅ 1) manda um update imediato quando algo importante muda (play/pause/track/volume)
   useEffect(() => {
     if (!store) return;
     updateSession();
   }, [store, isPlaying, volume, currentTrack?.id, updateSession]);
 
-  // ✅ 2) mantém heartbeat de “vida” (sem depender de play/pause)
   useEffect(() => {
     if (store) {
-      // 10s = bom equilíbrio (e bate com ONLINE_WINDOW_MS do Dashboard)
       heartbeatRef.current = setInterval(updateSession, 10000);
     }
     return () => {
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
   }, [store, updateSession]);
-  // ✅ quando trocar de aba ou fechar a página, tenta marcar STOPPED
-useEffect(() => {
-  if (!store) return;
 
-  const onVisibility = () => {
-    if (document.visibilityState === 'hidden') {
+  useEffect(() => {
+    if (!store) return;
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        markStoppedNow();
+      }
+    };
+
+    const onPageHide = () => {
       markStoppedNow();
-    }
-  };
+    };
 
-  const onPageHide = () => {
-    markStoppedNow();
-  };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
 
-  document.addEventListener('visibilitychange', onVisibility);
-  window.addEventListener('pagehide', onPageHide);
-
-  return () => {
-    document.removeEventListener('visibilitychange', onVisibility);
-    window.removeEventListener('pagehide', onPageHide);
-  };
-}, [store, markStoppedNow]);
-
-
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+    };
+  }, [store, markStoppedNow]);
 
   /** 8) Volume + salvar estado */
   useEffect(() => {
@@ -485,7 +542,7 @@ useEffect(() => {
       volume,
       shouldBePlaying,
     });
-  }, [volume, storeId, currentTrack?.id, shouldBePlaying]); // ok
+  }, [volume, storeId, currentTrack?.id, shouldBePlaying]);
 
   /** =========================
    *  ✅ Force resume (anti-loop)
@@ -664,13 +721,11 @@ useEffect(() => {
           console.error('Erro ao tocar:', err);
           setIsPlaying(false);
 
-          // ✅ Se for erro de autoplay do navegador, não fica pulando
           if (err?.name === 'NotAllowedError') {
             toast.error('Navegador bloqueou autoplay. Clique em Play.');
             return;
           }
 
-          // ✅ Se deu erro real, tenta próxima música
           toast.error('Erro ao tocar música. Pulando para a próxima...');
           setTimeout(() => {
             playNextTrack();
@@ -746,7 +801,6 @@ useEffect(() => {
       resumeIntervalRef.current = null;
     }
 
-    // ✅ AQUI é o ponto: marca STOPPED imediatamente no banco
     writeSession({ status: 'stopped', is_playing: false });
   };
 
@@ -790,7 +844,6 @@ useEffect(() => {
     isAnnouncementPlayingRef.current = false;
     setCurrentAnnouncement(null);
 
-    // ✅ Se foi aviso de intervalo: atualiza last_played_at AGORA e vai pra próxima música
     if (wasInterval) {
       const scheduleId = pendingScheduleIdRef.current;
       pendingScheduleIdRef.current = null;
@@ -811,7 +864,6 @@ useEffect(() => {
       return;
     }
 
-    // ✅ Se foi aviso manual: volta a música como antes
     const el = audioRef.current;
     if (el) el.volume = Math.min(0.02, volume / 100);
 
@@ -861,7 +913,6 @@ useEffect(() => {
 
   const playAnnouncement = useCallback(
     (a: Announcement) => {
-      // ✅ manual por padrão (intervalo marca antes de chamar)
       if (!announcementWasIntervalRef.current) {
         announcementWasIntervalRef.current = false;
       }
@@ -904,7 +955,6 @@ useEffect(() => {
     if (!schedules.length) return;
 
     const tick = async () => {
-      // se já tem aviso tocando, ou já existe aviso pendente, não agenda outro
       if (currentAnnouncement || isAnnouncementPlayingRef.current) return;
       if (pendingAnnouncementRef.current) return;
 
@@ -933,7 +983,6 @@ useEffect(() => {
       const announcement = announcements.find((a) => a.id === due.announcement_id);
       if (!announcement) return;
 
-      // ✅ deixa pendente pro fim da música
       pendingAnnouncementRef.current = announcement;
       pendingScheduleIdRef.current = due.id;
 
@@ -951,16 +1000,10 @@ useEffect(() => {
 
     console.log('AUDIO: error', err);
 
-    // se estiver tocando aviso, não mexe
     if (isAnnouncementPlayingRef.current) return;
-
-    // se não era pra estar tocando, não pula
     if (!shouldBePlaying) return;
-
-    // se não tem playlist, não tem pra onde pular
     if (!tracks.length) return;
 
-    // anti-loop: se deu erro na mesma música em menos de 3s, não fica pulando infinito
     const now = Date.now();
     const curId = currentTrack?.id || null;
     if (lastSkipRef.current.trackId === curId && now - lastSkipRef.current.at < 3000) return;
