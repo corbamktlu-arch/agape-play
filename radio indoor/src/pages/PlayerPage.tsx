@@ -397,18 +397,17 @@ export default function PlayerPage() {
 
   /** 5) Quando tiver storeId, carrega loja + playlist + tracks */
   useEffect(() => {
-    if (!authLoading && user && storeId) {
-      loadStoreAndPlaylist();
-      // ✅ importante: ao trocar storeId, recarrega avisos corretos também
-      fetchData();
-    } else if (!storeId) {
-      setStore(null);
-      setTracks([]);
-      setCurrentTrack(null);
-      setLoadingPage(false);
-      setAnnouncements([]);
-    }
-  }, [authLoading, user, storeId, loadStoreAndPlaylist, fetchData]);
+  if (!authLoading && user && storeId) {
+    loadStoreAndPlaylist();
+  } else if (!storeId) {
+    setStore(null);
+    setTracks([]);
+    setCurrentTrack(null);
+    setLoadingPage(false);
+    setAnnouncements([]);
+  }
+}, [authLoading, user, storeId, loadStoreAndPlaylist]);
+
 
   /** 6) Quando currentTrack muda, seta src só se mudou + restaura tempo salvo */
   useEffect(() => {
